@@ -72,7 +72,10 @@
         <article><small>ACTUAL EXPENSES</small><strong id="actualExpenses">—</strong><span class="metric-foot">Approved and posted costs</span></article>
         <article class="balance-card"><small>AVAILABLE BALANCE</small><strong id="availableFunds">—</strong><span class="metric-foot">Funds received less posted costs</span></article>
         <article><small>PENDING COMMITMENTS</small><strong id="pendingCommitments">—</strong><span class="metric-foot">Open commitments, shown separately</span></article>
+        <article><small>PROJECTED AFTER COMMITMENTS</small><strong id="projectedFunds">—</strong><span class="metric-foot">Available funds less open commitments</span></article>
+        <article><small>ESTIMATE VARIANCE</small><strong id="estimateVariance">—</strong><span id="estimateVarianceLabel" class="metric-foot">Compared with indicative estimate</span></article>
       </section>
+      <div class="account-actions"><p>Plan-based estimates are indicative, not fixed-price commitments. Pending commitments are displayed separately and do not count as posted expenses.</p><button id="downloadStatementButton" type="button" class="secondary-action">Download project statement (CSV)</button><span id="statementMessage" class="form-message" role="status" aria-live="polite"></span></div>
       <div class="content-grid">
         <section class="panel"><div class="panel-head"><div><span class="eyebrow">PROJECT ACCOUNT</span><h3>Posted transactions</h3></div><span class="live-label">VERIFIED</span></div><div id="transactions" class="empty-state">Loading account activity…</div><p class="panel-note">Only posted entries affect the available balance. Pending top-ups, invoices and approvals are not treated as settled funds or actual expenses.</p></section>
         <section class="panel" id="procurement"><div class="panel-head"><div><span class="eyebrow">MATERIALS & PROCUREMENT</span><h3>Purchase orders</h3></div></div><div id="purchaseOrders" class="empty-state">Loading procurement activity…</div></section>

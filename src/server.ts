@@ -291,6 +291,84 @@ app.post("/api/ledger/:id/post", authenticate, allow(...financeRoles), asyncRout
   });
   return res.json({ entry, message: "Entry posted to the project ledger." });
 }));
+
+async function buildProjectStatement(projectId: string, user: AuthUser) {
+  const customer = user.role === UserRole.CUSTOMER;
+  const [project, entries, commitments, topUps] = await Promise.all([
+    prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true, code: true, name: true, location: true, status: true, updatedAt: true,
+        estimates: { where: { status: EstimateStatus.APPROVED }, orderBy: { version: "desc" }, take: 1, include: { lines: true } }
+      }
+    }),
+    prisma.ledgerEntry.findMany({ where: { projectId, status: LedgerStatus.POSTED }, orderBy: { postedAt: "desc" } }),
+    prisma.commitment.findMany({ where: { projectId, status: { in: ["OPEN", "PARTIALLY_FULFILLED"] } } }),
+    prisma.topUpRequest.findMany({
+      where: { projectId, ...(customer ? { requestedById: user.id } : {}) },
+      select: { amount: true, paymentMode: true, reference: true, status: true, submittedAt: true, reviewedAt: true, reviewReason: true },
+      orderBy: { submittedAt: "desc" }
+    })
+  ]);
+  if (!project) return null;
+  const summary = calculateProjectBalance(entries.filter(e => e.type !== LedgerType.REVERSAL).map(e => ({ type: e.type as PostedLedgerLine["type"], amount: e.amount })), commitments);
+  const approved = project.estimates[0];
+  const estimateTotal = approved ? approved.lines.reduce((total, line) => total.plus(money(line.quantity).mul(money(line.unitRate))), money(0)) : null;
+  const variance = estimateTotal ? money(summary.actualExpenses).minus(estimateTotal) : null;
+  return {
+    project: { id: project.id, code: project.code, name: project.name, location: project.location, status: project.status, updatedAt: project.updatedAt },
+    estimate: approved ? { version: approved.version, total: estimateTotal!.toFixed(2), indicative: true } : null,
+    summary: {
+      currency: "INR", ...summary,
+      estimateVariance: variance?.toFixed(2) ?? null,
+      estimatePosition: variance === null ? "NOT_APPROVED" : variance.gt(0) ? "ABOVE_INDICATIVE_ESTIMATE" : "AT_OR_BELOW_INDICATIVE_ESTIMATE"
+    },
+    transactions: entries.filter(e => e.type !== LedgerType.REVERSAL).map(entry => ({
+      date: entry.postedAt, type: entry.type, description: entry.description, reference: entry.reference, amount: entry.amount.toFixed(2)
+    })),
+    topUpRequests: topUps.map(request => ({ ...request, amount: request.amount.toFixed(2) }))
+  };
+}
+app.get("/api/projects/:id/statement", authenticate, asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const statement = await buildProjectStatement(projectId, req.user!);
+  return res.json({ statement, note: "The plan-based estimate is indicative, not a fixed-price commitment. Only posted ledger entries affect actual expenses and available funds." });
+}));
+app.get("/api/projects/:id/statement.csv", authenticate, asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const statement = await buildProjectStatement(projectId, req.user!);
+  if (!statement) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const csvCell = (value: unknown) => { const text = String(value ?? ""); const safe = /^[=+\-@\t\r]/.test(text) ? "'" + text : text; return '"' + safe.replace(/"/g, '""') + '"'; };
+  const rows: unknown[][] = [
+    ["Sanora Spaces — Project Statement"],
+    ["Project", statement.project.name],
+    ["Project code", statement.project.code],
+    ["Location", statement.project.location],
+    ["Status", statement.project.status],
+    ["Estimate type", "Indicative plan-based estimate; not a fixed-price commitment"],
+    ["Approved estimate", statement.estimate?.total ?? "Not approved"],
+    ["Funds received", statement.summary.fundsReceived],
+    ["Actual expenses", statement.summary.actualExpenses],
+    ["Refunds", statement.summary.refunds],
+    ["Available funds", statement.summary.availableFunds],
+    ["Pending commitments", statement.summary.pendingCommitments],
+    ["Projected after commitments", statement.summary.projectedAfterCommitments],
+    ["Actual expense variance vs indicative estimate", statement.summary.estimateVariance ?? "Not available"],
+    [],
+    ["Posted transactions"],
+    ["Date", "Type", "Description", "Reference", "Amount"]
+  ];
+  statement.transactions.forEach(entry => rows.push([entry.date ? new Date(entry.date).toISOString() : "", entry.type, entry.description, entry.reference, entry.amount]));
+  rows.push([], ["Customer top-up submissions"], ["Submitted date", "Payment mode", "Reference", "Status", "Amount", "Review reason"]);
+  statement.topUpRequests.forEach(item => rows.push([new Date(item.submittedAt).toISOString(), item.paymentMode, item.reference, item.status, item.amount, item.reviewReason]));
+  const csv = rows.map(row => row.map(csvCell).join(",")).join("\r\n");
+  await prisma.auditLog.create({ data: { actorId: req.user!.id, action: "PROJECT_STATEMENT_EXPORTED", entityType: "Project", entityId: projectId, metadata: { projectCode: statement.project.code, transactionCount: statement.transactions.length } } });
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", "attachment; filename=\"sanora-" + statement.project.code.replace(/[^a-zA-Z0-9_-]/g, "_") + "-statement.csv\"");
+  return res.send("\uFEFF" + csv);
+}));
+
 app.get("/api/projects/:id/ledger", authenticate, asyncRoute(async (req, res) => {
   const projectId = routeParam(req, "id");
   if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });

@@ -14,7 +14,7 @@ Premium public website and project operations platform for Sanora Spaces.
 ## Run locally
 - Node.js 20+
 - PostgreSQL
-- Configure environment variables as described in `docs/SECURE-DOCUMENT-STORAGE.md` and the deployment notes.
+- Configure environment variables as described in `docs/SECURE-DOCUMENT-STORAGE.md`, `docs/CUSTOMER-ONBOARDING.md` and the deployment notes.
 - Install dependencies with `npm install`.
 - Generate Prisma client with `npm run db:generate`.
 - Validate schema with `npx prisma validate`.

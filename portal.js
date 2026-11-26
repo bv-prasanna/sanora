@@ -279,11 +279,49 @@
     populatePlanningForms(members.members || [], workPlan.milestones || []);
     renderProject(projectResult.project, ledger, orders, labour, updates, workPlan);
   }
+  async function loadOperationsSummary() {
+    const result = await api("/operations/summary");
+    const metrics = [
+      ["Active projects", result.summary.activeProjects],
+      ["Pending top-ups", result.summary.pendingTopUps],
+      ["Expense reviews", result.summary.pendingExpenseReviews],
+      ["PO approvals", result.summary.purchaseOrdersAwaitingApproval],
+      ["Labour approvals", result.summary.labourRecordsAwaitingApproval],
+      ["Blocked tasks", result.summary.blockedTasks],
+      ["Overdue tasks", result.summary.overdueTasks],
+      ["Total projects", result.summary.totalProjects]
+    ];
+    const container = $("#opsMetrics"); container.replaceChildren();
+    metrics.forEach(([label, value]) => {
+      const card = window.document.createElement("article"); card.className = "ops-metric";
+      const name = window.document.createElement("small"); name.textContent = label;
+      const number = window.document.createElement("strong"); number.textContent = String(value ?? 0);
+      card.append(name, number); container.append(card);
+    });
+    const recent = $("#opsRecentProjects"); recent.replaceChildren();
+    if (!result.recentProjects?.length) return empty(recent, "No projects are assigned to this account yet.");
+    result.recentProjects.forEach(project => {
+      const item = window.document.createElement("article"); item.className = "ops-project";
+      const details = window.document.createElement("div");
+      const name = window.document.createElement("b"); name.textContent = project.name;
+      const meta = window.document.createElement("small"); meta.textContent = project.code + " · " + titleCase(project.status) + (project.location ? " · " + project.location : "");
+      details.append(name, meta);
+      const open = window.document.createElement("button"); open.type = "button"; open.textContent = "Open project";
+      open.addEventListener("click", async () => {
+        const select = $("#projectSelect"); select.value = project.id;
+        await loadProject(project.id).catch(error => message("#dashboardMessage", error.message, "error"));
+        $("#overview").scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      item.append(details, open); recent.append(item);
+    });
+    message("#opsMessage", "Showing " + result.summary.totalProjects + " projects available to your account.", "info");
+  }
   async function enterWorkspace() {
     show("dashboard");
     setText("#userName", currentUser?.name || "Customer");
     setText("#userEmail", currentUser?.email || "");
     setText("#userInitials", initials(currentUser?.name));
+    $("#operationsOverview").hidden = currentUser?.role === "CUSTOMER";
     $("#topUpPanel").hidden = currentUser?.role !== "CUSTOMER";
     $("#financeTopUpPanel").hidden = !["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role);
     const planningRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role);
@@ -293,8 +331,10 @@
     $("#siteUpdateVisibilityLabel").hidden = !managerRole;
     $("#milestoneVisibilityLabel").hidden = !managerRole;
     $("#taskVisibilityLabel").hidden = !managerRole;
-    try { await loadProjects(); }
-    catch (error) { message("#dashboardMessage", error.message, "error"); }
+    try {
+      await loadProjects();
+      if (currentUser?.role !== "CUSTOMER") await loadOperationsSummary();
+    } catch (error) { message("#dashboardMessage", error.message, "error"); }
   }
   function signOut(showMessage = true) {
     token = null; currentUser = null; sessionStorage.removeItem(tokenKey);

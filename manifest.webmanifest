@@ -1,0 +1,19 @@
+{
+  "id": "/portal.html",
+  "name": "Sanora Spaces",
+  "short_name": "Sanora",
+  "description": "Sanora Spaces project updates and customer workspace.",
+  "start_url": "/portal.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f3ef",
+  "theme_color": "#14251f",
+  "icons": [
+    { "src": "/assets/sanora-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Customer workspace", "short_name": "Workspace", "url": "/portal.html", "icons": [{ "src": "/assets/sanora-icon.svg", "sizes": "any", "type": "image/svg+xml" }] },
+    { "name": "Sanora website", "short_name": "Website", "url": "/index.html", "icons": [{ "src": "/assets/sanora-icon.svg", "sizes": "any", "type": "image/svg+xml" }] }
+  ]
+}

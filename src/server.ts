@@ -221,7 +221,7 @@ const lineSchema = z.object({
 app.post("/api/projects/:id/estimates", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
   const body = z.object({ title: z.string().min(2).max(160), assumptions: z.string().max(4000).optional(), exclusions: z.string().max(4000).optional(), validUntil: z.string().datetime().optional(), lines: z.array(lineSchema).min(1).max(500) }).parse(req.body);
   const project = await prisma.project.findUnique({ where: { id: routeParam(req, "id") } });
-  if (!project || !(await projectAccess(req.user!, project.id))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  if (!project || !(await projectAccess(req.user!, project.id, "UPDATE"))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   const estimate = await prisma.$transaction(async tx => {
     const last = await tx.estimate.findFirst({ where: { projectId: project.id }, orderBy: { version: "desc" } });
     const created = await tx.estimate.create({ data: {

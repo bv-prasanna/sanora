@@ -740,6 +740,18 @@ async function validateTaskAssignee(projectId: string, userId: string) {
   const membership = await prisma.projectMember.findFirst({ where: { projectId, userId, access: { in: ["UPDATE", "MANAGE"] } }, select: { id: true } });
   return membership ? assignee : null;
 }
+app.get("/api/projects/:id/members", authenticate, asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const [project, memberships] = await Promise.all([
+    prisma.project.findUnique({ where: { id: projectId }, include: { createdBy: { select: { id: true, name: true, role: true, active: true } } } }),
+    prisma.projectMember.findMany({ where: { projectId, user: { active: true, role: { not: UserRole.CUSTOMER } } }, include: { user: { select: { id: true, name: true, role: true } } } })
+  ]);
+  const staff = new Map<string, { id: string; name: string; role: UserRole }>();
+  if (project?.createdBy.active && project.createdBy.role !== UserRole.CUSTOMER) staff.set(project.createdBy.id, { id: project.createdBy.id, name: project.createdBy.name, role: project.createdBy.role });
+  memberships.forEach(member => staff.set(member.user.id, member.user));
+  return res.json({ members: [...staff.values()] });
+}));
 app.get("/api/projects/:id/work-plan", authenticate, asyncRoute(async (req, res) => {
   const projectId = routeParam(req, "id");
   if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });

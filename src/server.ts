@@ -350,6 +350,8 @@ app.post("/api/purchase-orders/:id/receipts", authenticate, allow(...staffRoles)
     notes: z.string().max(1000).optional(),
     lines: z.array(z.object({ lineId: z.string().uuid(), receivedQty: z.number().positive().max(1_000_000) })).min(1).max(200)
   }).parse(req.body);
+  const receivedLineIds = body.lines.map(line => line.lineId);
+  if (new Set(receivedLineIds).size !== receivedLineIds.length) return res.status(400).json({ error: { code: "DUPLICATE_RECEIPT_LINE", message: "Each purchase-order line can appear only once in a material receipt." } });
   const poId = routeParam(req, "id");
   const poForAccess = await prisma.purchaseOrder.findUnique({ where: { id: poId }, select: { projectId: true } });
   if (!poForAccess || !(await projectAccess(req.user!, poForAccess.projectId))) return res.status(404).json({ error: { code: "PURCHASE_ORDER_NOT_FOUND", message: "Purchase order was not found." } });
@@ -362,7 +364,11 @@ app.post("/api/purchase-orders/:id/receipts", authenticate, allow(...staffRoles)
       if (!line || line.receivedQty.plus(received.receivedQty).greaterThan(line.quantity)) throw Object.assign(new Error("Received quantity exceeds the purchase order quantity or references an invalid line."), { status: 400, code: "INVALID_RECEIPT_QUANTITY" });
     }
     for (const received of body.lines) {
-      await tx.purchaseOrderLine.update({ where: { id: received.lineId }, data: { receivedQty: { increment: money(received.receivedQty) } } });
+      const updatedLine = await tx.purchaseOrderLine.updateMany({
+        where: { id: received.lineId, receivedQty: { lte: line.quantity.minus(money(received.receivedQty)) } },
+        data: { receivedQty: { increment: money(received.receivedQty) } }
+      });
+      if (updatedLine.count !== 1) throw Object.assign(new Error("Another receipt changed this purchase-order line. Refresh and retry the receipt."), { status: 409, code: "RECEIPT_QUANTITY_CONFLICT" });
     }
     const receipt = await tx.materialReceipt.create({ data: {
       purchaseOrderId: po.id, receiptNumber: body.receiptNumber, receivedAt: body.receivedAt ? new Date(body.receivedAt) : new Date(),

@@ -491,3 +491,33 @@ These are configuration/policy decisions, not assumptions to hard-code:
 ---
 
 **Document control:** Version 1.4 adds an Agile-inspired construction delivery framework with WBS, Kanban, short-term planning/reviews, stage gates, progress measurement, role-based dashboards and continuous customer project tracking/document access. It retains the v1.3 physical/digital project-file controls, configurable property scheme model, independent property/construction referral programmes, and locality branch partner profit-sharing and monthly reconciliation requirements. This BRD is a business requirements baseline; detailed UX, API contracts, database schema, accounting policy and legal agreements are subsequent design deliverables.
+
+
+## Addendum — Construction commercial and project-funding clarification (v1.5)
+
+This addendum supersedes any interpretation that Sanora's construction service is a fixed-price turnkey contract, fixed package or universal fixed per-square-foot rate.
+
+### Commercial model
+Sanora's intended construction execution model is based on project-specific actual material and labour costs. The initial amount is an indicative estimate prepared from the customer's plan, scope, specifications, quantities, site information and prevailing rates. It is not a guaranteed final price. The estimate must show assumptions, exclusions, provisional quantities, rate date and version history.
+
+### Customer-funded project account
+The customer provides funds/top-ups to the project as work requires funding. A top-up is a customer receipt, not Sanora revenue and not an expense. The system must record each receipt with reference, date, amount, mode, reconciliation status and proof. Funding requests should explain the upcoming work package, planned material/labour needs and expected cost range; they must not be represented as fixed contract instalments.
+
+### Actual cost capture
+Material expenses must capture vendor, item/specification, quantity, unit, rate, tax/freight/discount as applicable, invoice, delivery/GRN, quality check, approval and payment proof. Labour expenses must capture worker/crew/contractor, attendance or measured quantity, unit, rate, work description, supervisor verification, approval and payment proof. Scope changes, revised drawings, market-rate changes and site-condition variations must be explained and reflected in versioned estimates/forecasts.
+
+### Account presentation and controls
+Show separately: (a) confirmed funds received, (b) posted actual material/labour and other approved project expenses, (c) approved but unpaid commitments, (d) refunds/reversals, (e) available funds, and (f) projected balance after commitments. Do not double-deduct commitments when the related invoice/expense is posted. Available funds must reconcile to the immutable project ledger. Correct posted records through linked reversals/adjustments, never silent deletion. Alert customers and project/finance teams when funds are likely to be insufficient for upcoming work.
+
+The platform must not describe the project account as a bank account, interest-bearing wallet, deposit or investment. Custody, segregation, refund and accounting treatment of customer funds require qualified legal/accounting approval before production use.
+
+### Acceptance criteria additions
+- No fixed per-square-foot or fixed turnkey price is assumed by default.
+- Initial estimate is plan/BOQ based, indicative, versioned and accompanied by assumptions and exclusions.
+- Customer top-ups are reconciled receipts and are not recognised as Sanora revenue merely on receipt.
+- Material and labour costs are itemised and evidence-backed.
+- Commitments are distinguished from actual posted expenses and available funds.
+- Customer can see why additional funds are needed and what work/material/labour they support.
+- Estimate-to-actual variance and its explanation remain visible.
+
+**Document control:** v1.5 clarifies the construction commercial model as actual project-specific material and labour costing funded through customer top-ups against a transparent project ledger. It supersedes any conflicting fixed-price or fixed per-square-foot interpretation.

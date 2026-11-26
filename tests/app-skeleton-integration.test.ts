@@ -6,6 +6,11 @@ test("Sanora API permissions are delegated to App Skeleton RBAC", () => {
   assert.equal(hasSanoraPermission(["SITE_ENGINEER"], "edit"), true);
   assert.equal(hasSanoraPermission(["CUSTOMER"], "delete"), false);
   assert.equal(hasSanoraPermission(["UNKNOWN"], "manage"), false);
+  assert.equal(hasSanoraPermission(["BRANCH_PARTNER"], "edit"), true);
+  assert.equal(hasSanoraPermission(["SALES"], "create"), true);
+  assert.equal(hasSanoraPermission(["AUDITOR"], "view"), true);
+  assert.equal(hasSanoraPermission(["AUDITOR"], "edit"), false);
+  assert.equal(hasSanoraPermission(["CUSTOMER"], "view"), true);
 });
 
 test("BOQ estimate uses paise-safe App Skeleton billing arithmetic", () => {

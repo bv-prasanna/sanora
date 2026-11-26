@@ -88,6 +88,8 @@ model User {
   reviewedTopUps TopUpRequest[] @relation("TopUpReviewer")
   assignedTasks ProjectTask[] @relation("ProjectTaskAssignee")
   createdTasks ProjectTask[] @relation("ProjectTaskCreator")
+  notifications Notification[] @relation("NotificationRecipient")
+  sentNotifications Notification[] @relation("NotificationActor")
 }
 
 model Project {
@@ -114,6 +116,7 @@ model Project {
   topUpRequests TopUpRequest[]
   milestones ProjectMilestone[]
   tasks ProjectTask[]
+  notifications Notification[]
   @@index([customerId, status])
 }
 
@@ -500,4 +503,36 @@ model TaskDependency {
   successor     ProjectTask @relation("TaskSuccessor", fields: [successorId], references: [id], onDelete: Cascade)
   @@unique([predecessorId, successorId])
   @@index([successorId])
+}
+
+enum NotificationType {
+  TASK_ASSIGNED
+  TASK_UPDATED
+  TOP_UP_CONFIRMED
+  TOP_UP_REJECTED
+  EXPENSE_APPROVED
+  EXPENSE_POSTED
+  LABOUR_APPROVED
+  PURCHASE_ORDER_APPROVED
+  SITE_UPDATE_PUBLISHED
+  GENERAL
+}
+
+model Notification {
+  id          String           @id @default(uuid())
+  recipientId String
+  actorId     String?
+  projectId   String?
+  type        NotificationType @default(GENERAL)
+  title       String
+  message     String
+  entityType  String?
+  entityId    String?
+  readAt      DateTime?
+  createdAt   DateTime         @default(now())
+  recipient   User             @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  actor       User?             @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  project     Project?          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@index([recipientId, readAt, createdAt])
+  @@index([projectId, createdAt])
 }

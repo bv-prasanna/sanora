@@ -256,7 +256,7 @@
       api("/projects/" + encodeURIComponent(projectId) + "/labour"),
       api("/projects/" + encodeURIComponent(projectId) + "/updates"),
       api("/projects/" + encodeURIComponent(projectId) + "/work-plan"),
-      api("/projects/" + encodeURIComponent(projectId) + "/members")
+      (["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role) ? api("/projects/" + encodeURIComponent(projectId) + "/members") : Promise.resolve({ members: [] }))
     ]);
     populatePlanningForms(members.members || [], workPlan.milestones || []);
     renderProject(projectResult.project, ledger, orders, labour, updates, workPlan);

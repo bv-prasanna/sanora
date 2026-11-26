@@ -1,5 +1,6 @@
 const CACHE_NAME = "sanora-shell-v1";
 const STATIC_ASSETS = [
+  "/",
   "/index.html",
   "/portal.html",
   "/styles.css",

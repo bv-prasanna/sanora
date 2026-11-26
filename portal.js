@@ -253,7 +253,7 @@
       container.append(card);
     }
   }
-  function renderProject(project, ledger, orders, labour, updates, workPlan, financeQueue) {
+  function renderProject(project, ledger, orders, labour, updates, workPlan, financeQueue, statement) {
     const summary = ledger.summary || {};
     setText("#projectCode", project.code);
     setText("#projectName", project.name);
@@ -263,9 +263,11 @@
     setText("#heroProjectCode", project.code);
     setText("#projectStatus", titleCase(project.status));
     setText("#lastUpdated", date(project.updatedAt));
-    const approved = (project.estimates || []).find(x => x.status === "APPROVED");
-    const estimateTotal = approved?.lines?.reduce((sum, line) => sum + Number(line.quantity) * Number(line.unitRate), 0);
-    setText("#approvedEstimate", approved ? money(estimateTotal) : "Not yet approved");
+    setText("#approvedEstimate", statement?.estimate ? money(statement.estimate.total) : "Not yet approved");
+    const variance = statement?.summary?.estimateVariance;
+    setText("#estimateVariance", variance === null || variance === undefined ? "—" : money(Math.abs(Number(variance))));
+    setText("#estimateVarianceLabel", variance === null || variance === undefined ? "No approved indicative estimate" : Number(variance) > 0 ? "Above indicative estimate" : "At or below indicative estimate");
+    setText("#projectedFunds", money(summary.projectedAfterCommitments));
     setText("#fundsReceived", money(summary.fundsReceived));
     setText("#actualExpenses", money(summary.actualExpenses));
     setText("#availableFunds", money(summary.availableFunds));
@@ -306,7 +308,7 @@
     if (!projectId) return;
     activeProjectId = projectId;
     message("#dashboardMessage", "Refreshing project information…", "info");
-    const [projectResult, ledger, orders, labour, updates, workPlan, members, financeQueue] = await Promise.all([
+    const [projectResult, ledger, orders, labour, updates, workPlan, members, financeQueue, statementResult] = await Promise.all([
       api("/projects/" + encodeURIComponent(projectId)),
       api("/projects/" + encodeURIComponent(projectId) + "/ledger"),
       api("/projects/" + encodeURIComponent(projectId) + "/purchase-orders"),
@@ -314,10 +316,11 @@
       api("/projects/" + encodeURIComponent(projectId) + "/updates"),
       api("/projects/" + encodeURIComponent(projectId) + "/work-plan"),
       (["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role) ? api("/projects/" + encodeURIComponent(projectId) + "/members") : Promise.resolve({ members: [] })),
-      (["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role) ? api("/projects/" + encodeURIComponent(projectId) + "/finance-queue") : Promise.resolve({}))
+      (["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role) ? api("/projects/" + encodeURIComponent(projectId) + "/finance-queue") : Promise.resolve({})),
+      api("/projects/" + encodeURIComponent(projectId) + "/statement")
     ]);
     populatePlanningForms(members.members || [], workPlan.milestones || []);
-    renderProject(projectResult.project, ledger, orders, labour, updates, workPlan, financeQueue);
+    renderProject(projectResult.project, ledger, orders, labour, updates, workPlan, financeQueue, statementResult.statement);
   }
   async function loadOperationsSummary() {
     const result = await api("/operations/summary");
@@ -410,6 +413,23 @@
     }, error => {
       message("#siteUpdateMessage", error.code === 1 ? "Location permission was denied. You can enter coordinates manually." : "Unable to get your location. Try again or enter coordinates manually.", "error");
     }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 });
+  });
+  $("#downloadStatementButton").addEventListener("click", async () => {
+    if (!activeProjectId || !token) return;
+    const button = $("#downloadStatementButton"); button.disabled = true; button.textContent = "Preparing statement…";
+    try {
+      const response = await fetch(API + "/projects/" + encodeURIComponent(activeProjectId) + "/statement.csv", { headers: { Authorization: "Bearer " + token } });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error?.message || "The project statement could not be downloaded.");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = window.document.createElement("a"); anchor.href = url; anchor.download = "sanora-project-statement.csv";
+      window.document.body.append(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+      message("#statementMessage", "Project statement downloaded.", "info");
+    } catch (error) { message("#statementMessage", error.message, "error"); }
+    finally { button.disabled = false; button.textContent = "Download project statement (CSV)"; }
   });
   $("#siteUpdateForm").addEventListener("submit", async event => {
     event.preventDefault();

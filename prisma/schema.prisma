@@ -79,6 +79,9 @@ model User {
   memberships  ProjectMember[]
   auditLogs    AuditLog[]
   ledgerEntries LedgerEntry[]  @relation("LedgerActor")
+  createdPurchaseOrders PurchaseOrder[] @relation("PurchaseOrderCreator")
+  approvedPurchaseOrders PurchaseOrder[] @relation("PurchaseOrderApprover")
+  recordedLabour LabourRecord[] @relation("LabourRecorder")
 }
 
 model Project {
@@ -98,6 +101,8 @@ model Project {
   estimates   Estimate[]
   ledger      LedgerEntry[]
   commitments Commitment[]
+  purchaseOrders PurchaseOrder[]
+  labourRecords LabourRecord[]
   @@index([customerId, status])
 }
 
@@ -197,4 +202,106 @@ model AuditLog {
 model CustomerProjectRelation {
   id String @id @default(uuid())
   // Reserved for future customer-specific relationship metadata.
+}
+
+ 
+enum PurchaseOrderStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum LabourRecordStatus {
+  SUBMITTED
+  APPROVED
+  REJECTED
+  PAID
+}
+
+model Vendor {
+  id          String   @id @default(uuid())
+  name        String
+  contactName String?
+  phone       String?
+  email       String?
+  gstin       String?
+  address     String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  purchaseOrders PurchaseOrder[]
+  @@index([name, active])
+}
+
+model PurchaseOrder {
+  id            String             @id @default(uuid())
+  projectId     String
+  vendorId      String
+  orderNumber   String             @unique
+  status        PurchaseOrderStatus @default(DRAFT)
+  notes         String?
+  subtotal      Decimal            @db.Decimal(14, 2)
+  createdById   String
+  approvedById  String?
+  createdAt     DateTime           @default(now())
+  approvedAt    DateTime?
+  project       Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  vendor        Vendor             @relation(fields: [vendorId], references: [id])
+  createdBy     User               @relation("PurchaseOrderCreator", fields: [createdById], references: [id])
+  approvedBy    User?              @relation("PurchaseOrderApprover", fields: [approvedById], references: [id])
+  lines         PurchaseOrderLine[]
+  receipts      MaterialReceipt[]
+  @@index([projectId, status, createdAt])
+}
+
+model PurchaseOrderLine {
+  id              String        @id @default(uuid())
+  purchaseOrderId String
+  description     String
+  specification   String?
+  quantity        Decimal       @db.Decimal(14, 3)
+  receivedQty     Decimal       @default(0) @db.Decimal(14, 3)
+  unit            String
+  unitRate        Decimal       @db.Decimal(14, 2)
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  @@index([purchaseOrderId])
+}
+
+model MaterialReceipt {
+  id              String        @id @default(uuid())
+  purchaseOrderId String
+  receiptNumber   String
+  receivedAt      DateTime      @default(now())
+  receivedBy      String
+  evidenceUrl     String?
+  notes           String?
+  lines           Json
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  @@unique([purchaseOrderId, receiptNumber])
+  @@index([purchaseOrderId, receivedAt])
+}
+
+model LabourRecord {
+  id             String            @id @default(uuid())
+  projectId      String
+  workerName     String
+  workDate       DateTime
+  workType       String
+  description    String
+  quantity       Decimal           @db.Decimal(14, 3)
+  unit           String
+  rate           Decimal           @db.Decimal(14, 2)
+  amount         Decimal           @db.Decimal(14, 2)
+  status         LabourRecordStatus @default(SUBMITTED)
+  recordedById   String
+  approvedById   String?
+  evidenceUrl    String?
+  createdAt      DateTime          @default(now())
+  approvedAt     DateTime?
+  project        Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  recordedBy     User              @relation("LabourRecorder", fields: [recordedById], references: [id])
+  @@index([projectId, workDate, status])
 }

@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { calculateProjectBalance, type PostedLedgerLine } from "./domain/ledger-balance.js";
-import { hasSanoraPermission, redactAuditMetadata, estimateProjectTotal, validateProjectTransition, validateTaskTransition } from "./skeleton/policies.mjs";
+import { hasSanoraPermission, redactAuditMetadata, estimateProjectTotal, validateProjectTransition, validateTaskTransition, validateMilestoneTransition } from "./skeleton/policies.mjs";
 
 const prisma = new PrismaClient();
 const app = express();
@@ -815,6 +815,10 @@ app.patch("/api/milestones/:id", authenticate, allow(...planningRoles), asyncRou
     customerVisible: z.boolean().optional()
   }).parse(req.body);
   if (body.customerVisible !== undefined && !(await projectAccess(req.user!, current.projectId, "MANAGE"))) return res.status(403).json({ error: { code: "MILESTONE_VISIBILITY_REQUIRES_MANAGER", message: "Only a project manager can change customer visibility." } });
+  if (body.status && body.status !== current.status) {
+    try { validateMilestoneTransition(current.status, body.status, req.user!.id, true); }
+    catch { return res.status(409).json({ error: { code: "INVALID_MILESTONE_TRANSITION", message: "This milestone cannot move from " + current.status + " to " + body.status + "." } }); }
+  }
   if (body.status === ProjectMilestoneStatus.COMPLETED) {
     const unfinished = await prisma.projectTask.count({ where: { milestoneId: id, status: { notIn: [ProjectTaskStatus.COMPLETED, ProjectTaskStatus.CANCELLED] } } });
     if (unfinished > 0) return res.status(409).json({ error: { code: "MILESTONE_TASKS_INCOMPLETE", message: "Complete or cancel all milestone tasks before completing this milestone." } });

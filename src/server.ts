@@ -25,6 +25,7 @@ app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: "draft-8", le
 
 type AuthUser = { id: string; email: string; role: UserRole };
 type AuthedRequest = Request & { user?: AuthUser };
+const routeParam = (req: Request, key: string): string => { const value = req.params[key]; if (typeof value !== "string") throw Object.assign(new Error("Invalid route parameter."), { status: 400, code: "INVALID_ROUTE_PARAMETER" }); return value; };
 const asyncRoute = (fn: (req: AuthedRequest, res: Response) => Promise<unknown>) =>
   (req: Request, res: Response, next: NextFunction) => Promise.resolve(fn(req as AuthedRequest, res)).catch(next);
 
@@ -42,8 +43,8 @@ const allow = (...roles: UserRole[]) => (req: AuthedRequest, res: Response, next
   if (!req.user || !roles.includes(req.user.role) || !hasSanoraPermission([req.user.role], "edit")) return res.status(403).json({ error: { code: "ACCESS_DENIED", message: "You do not have permission to perform this action." } });
   next();
 };
-const staffRoles = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.SITE_ENGINEER, UserRole.PROCUREMENT, UserRole.FINANCE];
-const financeRoles = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.FINANCE];
+const staffRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.SITE_ENGINEER, UserRole.PROCUREMENT, UserRole.FINANCE];
+const financeRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.FINANCE];
 const projectAccess = async (user: AuthUser, projectId: string) => {
   if (user.role !== UserRole.CUSTOMER) return true;
   const member = await prisma.projectMember.findFirst({ where: { projectId, userId: user.id } });
@@ -62,7 +63,7 @@ app.post("/api/auth/login", asyncRoute(async (req, res) => {
   if (!user || !user.active || !(await bcrypt.compare(body.password, user.passwordHash))) {
     return res.status(401).json({ error: { code: "INVALID_CREDENTIALS", message: "Email or password is incorrect." } });
   }
-  const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, jwtSecret!, { expiresIn: process.env.JWT_EXPIRES_IN || "8h" });
+  const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, jwtSecret!, { expiresIn: (process.env.JWT_EXPIRES_IN || "8h") as jwt.SignOptions["expiresIn"] });
   return res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
 }));
 app.get("/api/auth/me", authenticate, asyncRoute(async (req, res) => {
@@ -92,7 +93,7 @@ app.post("/api/projects", authenticate, allow(...staffRoles), asyncRoute(async (
 
 app.post("/api/projects/:id/status", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
   const body = z.object({ status: z.enum(["ENQUIRY","ESTIMATION","AWAITING_APPROVAL","PLANNING","IN_PROGRESS","ON_HOLD","HANDOVER","COMPLETED","CANCELLED"]) }).parse(req.body);
-  const project = await prisma.project.findUnique({ where: { id: req.params.id } });
+  const project = await prisma.project.findUnique({ where: { id: routeParam(req, "id") } });
   if (!project) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   validateProjectTransition(project.status, body.status, req.user!.id, true);
   const updated = await prisma.$transaction(async tx => {
@@ -224,7 +225,7 @@ app.get("/api/projects/:id/ledger", authenticate, asyncRoute(async (req, res) =>
     prisma.ledgerEntry.findMany({ where: { projectId, status: LedgerStatus.POSTED }, orderBy: { postedAt: "desc" } }),
     prisma.commitment.findMany({ where: { projectId, status: { in: ["OPEN", "PARTIALLY_FULFILLED"] } } })
   ]);
-  const summary = calculateProjectBalance(entries.map(e => ({ type: e.type, amount: e.amount })), commitments);
+  const summary = calculateProjectBalance(entries.filter(e => e.type !== LedgerType.REVERSAL).map(e => ({ type: e.type, amount: e.amount })), commitments);
   return res.json({ entries, summary: { currency: "INR", ...summary }, note: "Only posted ledger entries affect actual balances. Pending commitments are shown separately and are not double-deducted from actual expenses." });
 }));
 app.post("/api/projects/:id/commitments", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {

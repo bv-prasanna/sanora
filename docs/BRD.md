@@ -1,6 +1,6 @@
 # SANORA SPACES — Business Requirements Document (BRD)
 
-**Version:** 1.2  
+**Version:** 1.3  
 **Status:** Requirements baseline for product discovery and implementation  
 **Company:** Sanora Spaces  
 **Tagline:** Smart Spaces, Better Life.
@@ -238,6 +238,51 @@ Customer portal/app shows:
 - Notifications for each receipt, expense posting, approval, low balance, schedule change and milestone update.
 - Query/dispute workflow with comments and resolution trail.
 
+### 8.6 Branch-level physical project files and mandatory portal uploads
+
+Every branch that executes construction work must maintain a separate, organised physical project file for **each individual construction project**. Maintaining a physical file does not replace the digital record: the branch must also upload all relevant project documents to the Sanora portal. The portal is the central, authoritative repository for company oversight, customer visibility (where permitted), audit and continuity.
+
+**Project file creation and ownership**
+- On project activation, the system generates a unique project code and a standard project-file index/cover sheet.
+- The executing branch manager is accountable for opening and maintaining the physical file; a designated project coordinator/document controller is responsible for completeness and timely portal uploads.
+- The physical file must be clearly labelled with project code, customer/project name, site location, originating branch, executing branch, project manager/site engineer and project start date.
+- The portal must provide a matching digital folder/document register using the same project code and document categories.
+- If more than one branch is involved, identify the lead/executing branch and record each supporting branch's responsibility. Do not create disconnected duplicate project records.
+
+**Minimum project document register (configurable by project type and stage)**
+1. Customer and site: customer onboarding/KYC records as permitted, ownership/title documents supplied by customer, survey/site details, site photographs, site handover and possession records.
+2. Commercial: enquiry/brief, site visit report, estimate, BOQ, scope of work, quotations, approved proposal, agreement, annexures, change orders, variations and customer approvals.
+3. Design and engineering: survey measurements, soil/geotechnical reports where applicable, architectural plans, structural drawings, MEP drawings, design calculations, revisions, consultant approvals and as-built drawings.
+4. Statutory and permissions: applications, permits, sanctions, NOCs, inspection records, receipts and final completion/occupancy documents as applicable to the project and jurisdiction.
+5. Project planning: baseline schedule, milestone plan, work orders, method statements, risk register, meeting minutes and site instructions.
+6. Procurement and materials: purchase requests, comparative quotations, vendor approvals, purchase orders, delivery challans, goods-received notes, material test certificates, quality reports, stock/consumption records, invoices, debit/credit notes and payment proofs.
+7. Labour and subcontractors: work orders, subcontract agreements, attendance, measurements, wage sheets, bills, safety induction and payment proofs.
+8. Execution and site records: daily site reports, progress photographs/videos, geo-tagged updates where available, inspection checklists, test reports, quality observations, non-conformance reports, corrective actions, safety/toolbox records and incident reports.
+9. Finance and customer communication: advance/top-up receipts, project expense vouchers, customer statements, approvals, notices, correspondence, meeting records and dispute/resolution trail.
+10. Completion and handover: snag/punch lists, rectification evidence, testing and commissioning reports, completion certificates, handover checklist, warranties, manuals, keys/access handover and final account statement.
+
+**Document upload and control requirements**
+- Upload documents against the correct project, category, stage, transaction or milestone; bulk upload from mobile/web must be supported.
+- Capture document title/type, reference number, issue date, received/uploaded date, issuing party, uploader, branch, project stage, review status, confidentiality classification and applicable expiry/renewal date.
+- Support PDF, office documents and image formats, configurable file-size limits, secure previews and downloads, malware scanning and access-controlled storage.
+- Support versioning and revision history for drawings, agreements and approvals. A new revision must not silently overwrite an approved version; retain prior versions and identify the current approved revision.
+- Workflow: Required → Pending Upload → Uploaded → Under Review → Approved / Rejected / Correction Required → Superseded / Archived.
+- Reviewer comments and resubmission history must be retained. Record who reviewed, when, and the reason for rejection/approval.
+- Configure mandatory document checklists by project type, jurisdiction and lifecycle stage. Prevent progression through designated stage gates or financial approvals when critical documents are missing, unless an authorised exception with reason is recorded.
+- Link invoices and payment proofs directly to their corresponding expense, purchase order, goods receipt or labour payment. Link approvals and drawings to the work/milestone they authorise.
+- Portal must show a project document completeness dashboard: required, uploaded, approved, rejected, expired and outstanding documents.
+- Branch users may upload and view documents only for projects within their authorised scope. Corporate admin/document controllers can review across branches. Customers see only approved customer-shareable documents. Partners see only documents necessary for their authorised branch/project role.
+- Maintain an immutable audit trail for upload, view/download where appropriate, replacement, approval, rejection, sharing and archival.
+- Physical file index must be printable/downloadable from the portal and include document checklist, revision, upload status and physical-file location. Periodic branch audits must compare physical-file completeness with the portal register.
+- On project closure or branch reassignment, the complete physical file must be handed over to the designated Sanora custodian; digital access and ownership must be reassigned without loss of history.
+- Define retention, archival, legal hold and secure disposal policies with legal/accounting advisers. Do not allow branch users to permanently delete official project records.
+
+**Operational controls and notifications**
+- Notify the branch manager and document controller when a required document is due, missing, rejected, expiring or overdue.
+- Escalate unresolved critical document gaps to corporate operations.
+- Monthly branch compliance reports must show project-wise physical-file checklist status, portal upload completeness, pending reviews and overdue items.
+- Site engineers must be able to capture/upload documents and photographs from mobile at the project site, including offline queueing with clear sync status where technically feasible.
+
 ## 9. Website and applications
 
 ### 9.1 Public corporate website
@@ -267,7 +312,7 @@ Channels: in-app, email and WhatsApp (via approved provider). Store delivery sta
 - PropertyProject, PropertyUnit, PropertyInventory, PropertyDocument.
 - Scheme, SchemeVersion, SchemeScheduleRule, SchemeEnrolment, CustomerPaymentSchedule, SchemeCollection, SchemeReceipt.
 - Lead, Referral, ReferralProgramme, ReferralRuleVersion, ReferralEntitlement, ReferralSettlement.
-- ConstructionProject, ProjectAgreement, ProjectStage, ProjectMilestone, Drawing, Approval, ProjectDocument.
+- ConstructionProject, ProjectAgreement, ProjectStage, ProjectMilestone, Drawing, Approval, ProjectDocument, ProjectDocumentCategory, ProjectDocumentVersion, ProjectDocumentReview, ProjectPhysicalFileRegister, ProjectDocumentChecklist, DocumentHandover.
 - Estimate, BOQ, PurchaseRequest, VendorQuote, PurchaseOrder, GoodsReceipt, Material, StockMovement, LabourAttendance, LabourMeasurement.
 - ProjectFundLedger, ProjectExpense, ProjectTopUp, ProjectCommitment, CustomerStatement.
 - BranchShareRule, BranchShareRuleVersion, BranchAttribution, BranchShareAccrual, PartnerEntitlementLedger, PartnerSettlement, SettlementBatch.
@@ -323,6 +368,9 @@ All money movements and entitlements must have unique IDs, timestamps, actor, so
 - A project can have a project-specific share override and partner split weights.
 - Monthly close produces separate partner-share, property-referral and construction-referral statements and payment batches.
 - Finance can reconcile actual payments and carry forward outstanding/adjustment balances.
+- Each executing branch maintains a separate physical file for every construction project and uploads all relevant records to the matching portal project folder.
+- Portal document register tracks required/uploaded/approved/rejected/expired documents, versions, reviewer comments and audit history.
+- Physical-file index can be printed and reconciled against the portal register during branch audits.
 - Construction customer can view every posted project receipt and expense with supporting documents.
 - Low project balance triggers configurable notifications.
 - Privileged changes, approvals, reversals and period reopenings are fully auditable.
@@ -343,4 +391,4 @@ These are configuration/policy decisions, not assumptions to hard-code:
 
 ---
 
-**Document control:** Version 1.2 incorporates the configurable property scheme model, independent property/construction referral programmes, and the locality branch partner profit-sharing and monthly reconciliation model requested by Sanora Spaces. This BRD is a business requirements baseline; detailed UX, API contracts, database schema, accounting policy and legal agreements are subsequent design deliverables.
+**Document control:** Version 1.3 adds mandatory branch-maintained physical project files and a corresponding controlled digital document register in the Sanora portal, including checklists, review/version workflows, access controls, handover and branch audits. It retains the configurable property scheme model, independent property/construction referral programmes, and locality branch partner profit-sharing and monthly reconciliation requirements. This BRD is a business requirements baseline; detailed UX, API contracts, database schema, accounting policy and legal agreements are subsequent design deliverables.

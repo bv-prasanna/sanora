@@ -102,7 +102,7 @@ app.post("/api/projects/:id/status", authenticate, allow(...staffRoles), asyncRo
   });
   return res.json({ project: updated });
 }));
-\napp.get("/api/projects/:id", authenticate, asyncRoute(async (req, res) => {
+app.get("/api/projects/:id", authenticate, asyncRoute(async (req, res) => {
   if (!(await projectAccess(req.user!, req.params.id))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   const project = await prisma.project.findUnique({ where: { id: req.params.id }, include: { estimates: { orderBy: { version: "desc" }, include: { lines: true } }, commitments: true } });
   if (!project) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });

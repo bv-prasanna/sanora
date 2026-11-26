@@ -364,6 +364,8 @@ app.post("/api/purchase-orders/:id/receipts", authenticate, allow(...staffRoles)
       if (!line || line.receivedQty.plus(received.receivedQty).greaterThan(line.quantity)) throw Object.assign(new Error("Received quantity exceeds the purchase order quantity or references an invalid line."), { status: 400, code: "INVALID_RECEIPT_QUANTITY" });
     }
     for (const received of body.lines) {
+      const line = lineMap.get(received.lineId);
+      if (!line) throw Object.assign(new Error("Receipt references an invalid purchase-order line."), { status: 400, code: "INVALID_RECEIPT_LINE" });
       const updatedLine = await tx.purchaseOrderLine.updateMany({
         where: { id: received.lineId, receivedQty: { lte: line.quantity.minus(money(received.receivedQty)) } },
         data: { receivedQty: { increment: money(received.receivedQty) } }

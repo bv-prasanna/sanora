@@ -75,6 +75,7 @@ model User {
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
   createdProjects Project[]    @relation("ProjectCreator")
+  customerProjects Project[]   @relation("ProjectCustomer")
   memberships  ProjectMember[]
   auditLogs    AuditLog[]
   ledgerEntries LedgerEntry[]  @relation("LedgerActor")

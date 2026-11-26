@@ -47,8 +47,12 @@
     <div class="portal-main">
       <header class="topbar">
         <div><span class="crumb">CUSTOMER PORTAL /</span><b id="projectCode">Your projects</b></div>
-        <div class="top-actions"><span class="status-pill"><i></i> Live project data</span></div>
+        <div class="top-actions"><button id="notificationButton" class="notification-button" type="button" aria-expanded="false">Notifications <span id="notificationCount" hidden>0</span></button><span class="status-pill"><i></i> Live project data</span></div>
       </header>
+      <section id="notificationPanel" class="notification-panel" hidden>
+        <div class="notification-panel-head"><div><span class="eyebrow">YOUR INBOX</span><h3>Notifications</h3></div><button id="markAllNotificationsRead" type="button">Mark all read</button></div>
+        <div id="notificationList" class="notification-list empty-state">Loading notifications…</div>
+      </section>
       <section id="operationsOverview" class="operations-overview" hidden>
         <div class="ops-heading"><div><span class="eyebrow">SANORA OPERATIONS</span><h2>Portfolio overview</h2><p>Live workload and approvals across the projects assigned to your account.</p></div><span class="live-label">LIVE SUMMARY</span></div>
         <div id="opsMetrics" class="ops-metrics"><div class="empty-state">Loading operations summary…</div></div>

@@ -95,6 +95,29 @@
       <div class="content-grid">
         <section class="panel" id="workPlan">
           <div class="panel-head"><div><span class="eyebrow">PROJECT DELIVERY</span><h3>Milestones & progress</h3></div><span class="live-label">LIVE PLAN</span></div>
+          <div id="planningControls" class="planning-controls" hidden>
+            <div class="planning-form-grid">
+              <form id="milestoneForm" class="planning-form">
+                <h4>Add milestone</h4>
+                <label for="milestoneTitle">Milestone title</label><input id="milestoneTitle" name="title" required minlength="3" maxlength="160" placeholder="e.g. Foundation completed">
+                <label for="milestoneDate">Target date</label><input id="milestoneDate" name="targetDate" type="date">
+                <label for="milestoneDescription">Description</label><textarea id="milestoneDescription" name="description" rows="2" maxlength="1200"></textarea>
+                <label class="inline-check" id="milestoneVisibilityLabel"><input id="milestoneVisibility" type="checkbox"> Publish to customer</label>
+                <button type="submit">Add milestone</button>
+              </form>
+              <form id="taskForm" class="planning-form">
+                <h4>Add work item</h4>
+                <label for="taskTitle">Task title</label><input id="taskTitle" name="title" required minlength="3" maxlength="160" placeholder="e.g. Complete site marking">
+                <label for="taskPackage">Work package</label><input id="taskPackage" name="workPackage" maxlength="120" placeholder="Civil / Structural / Electrical">
+                <label for="taskMilestone">Milestone</label><select id="taskMilestone" name="milestoneId"><option value="">No milestone</option></select>
+                <label for="taskAssignee">Assign to</label><select id="taskAssignee" name="assignedToId"><option value="">Unassigned</option></select>
+                <label for="taskDueDate">Due date</label><input id="taskDueDate" name="dueDate" type="date">
+                <label class="inline-check" id="taskVisibilityLabel"><input id="taskVisibility" type="checkbox"> Show to customer</label>
+                <button type="submit">Create task</button>
+              </form>
+            </div>
+            <p id="planningMessage" class="form-message" role="status" aria-live="polite"></p>
+          </div>
           <div class="work-progress"><div><small>DELIVERY PROGRESS</small><strong id="workProgressValue">0%</strong></div><div class="progress-track"><span id="workProgressBar"></span></div><small id="workProgressMeta">No work plan has been published yet.</small></div>
           <div id="milestoneList" class="milestone-list empty-state">Loading milestones…</div>
           <div class="task-list-wrap"><h4>Visible work items</h4><div id="taskList" class="empty-state">Loading project tasks…</div></div>

@@ -14,11 +14,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-      - run: npm install --package-lock-only
-      - run: npm install
+      - run: npm install --no-audit --no-fund
       - run: npx prisma validate
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sanora?schema=public
+      - run: npx prisma generate
       - run: npm run typecheck
-      - run: npx tsx --test tests/*.test.ts
+      - run: npm test

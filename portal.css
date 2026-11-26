@@ -25,3 +25,5 @@
 @media(max-width:650px){.operations-overview{padding:20px 0}.ops-heading{flex-direction:column}.ops-heading h2{font-size:19px}.ops-metric{padding:11px}.ops-metric strong{font-size:19px}.ops-project{align-items:flex-start}.ops-project button{padding:7px}}
 
 .finance-queue-group{padding:12px 0;border-top:1px solid #eceee8}.finance-queue-group h4{font:700 11px Manrope;margin:0 0 7px;color:#445448}.finance-queue-group .transaction{flex-wrap:wrap}.finance-queue-group .task-action{margin-left:auto}#financeQueuePanel[hidden]{display:none!important}
+
+.portal-brandbar .pwa-install-button{margin-left:auto;border:1px solid #d8ddd4;background:#fff;color:#49634f;padding:8px 12px;font:600 9px "DM Sans";cursor:pointer}.portal-brandbar .pwa-install-button[hidden]{display:none!important}

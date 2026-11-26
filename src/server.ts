@@ -15,6 +15,7 @@ import { hasSanoraPermission, redactAuditMetadata, estimateProjectTotal, validat
 
 const prisma = new PrismaClient();
 const app = express();
+app.set("trust proxy", 1);
 const port = Number(process.env.PORT || 4000);
 const jwtSecret = process.env.JWT_SECRET;
 if (!jwtSecret || jwtSecret.length < 32) throw new Error("JWT_SECRET must be configured with at least 32 characters.");
@@ -875,7 +876,7 @@ app.get("/api/operations/summary", authenticate, asyncRoute(async (req, res) => 
   });
   const projectIds = projects.map(project => project.id);
   const leadWhere: Prisma.LeadWhereInput = leadGlobalRoles.includes(req.user!.role) ? {} : { OR: [{ assignedToId: req.user!.id }, { assignedToId: null }] };
-  const newLeads = await prisma.lead.count({ where: { ...leadWhere, status: LeadStatus.NEW } });
+  const newLeads = leadRoles.includes(req.user!.role) ? await prisma.lead.count({ where: { ...leadWhere, status: LeadStatus.NEW } }) : 0;
   if (!projectIds.length) return res.json({
     summary: { totalProjects: 0, activeProjects: 0, pendingTopUps: 0, pendingExpenseReviews: 0, purchaseOrdersAwaitingApproval: 0, labourRecordsAwaitingApproval: 0, blockedTasks: 0, overdueTasks: 0, newLeads },
     recentProjects: []

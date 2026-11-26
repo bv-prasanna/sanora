@@ -205,6 +205,7 @@ app.post("/api/customer-invitations", authenticate, allow(...customerAdminRoles)
     const customer = existing
       ? await tx.user.update({ where: { id: existing.id }, data: { name: body.name, phone: body.phone, passwordHash, active: false } })
       : await tx.user.create({ data: { name: body.name, email, phone: body.phone, passwordHash, role: UserRole.CUSTOMER, active: false } });
+    if (existing) await tx.customerInvitation.updateMany({ where: { userId: customer.id, acceptedAt: null, revokedAt: null }, data: { revokedAt: new Date() } });
     const created = await tx.customerInvitation.create({
       data: { userId: customer.id, invitedById: req.user!.id, email, tokenHash, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }
     });
@@ -222,14 +223,14 @@ app.post("/api/public/customer-invitations/accept", invitationLimiter, asyncRout
   }).parse(req.body);
   const tokenHash = createHash("sha256").update(body.token).digest("hex");
   const invitation = await prisma.customerInvitation.findFirst({
-    where: { tokenHash, acceptedAt: null, expiresAt: { gt: new Date() } },
+    where: { tokenHash, acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
     include: { user: true }
   });
   if (!invitation || invitation.user.active || invitation.user.role !== UserRole.CUSTOMER) return res.status(400).json({ error: { code: "INVITATION_INVALID_OR_EXPIRED", message: "This invitation is invalid, expired or already used. Contact the Sanora team for a new invitation." } });
   const passwordHash = await bcrypt.hash(body.password, 12);
   await prisma.$transaction(async tx => {
     const acceptedAt = new Date();
-    const claimed = await tx.customerInvitation.updateMany({ where: { id: invitation.id, acceptedAt: null, expiresAt: { gt: acceptedAt } }, data: { acceptedAt } });
+    const claimed = await tx.customerInvitation.updateMany({ where: { id: invitation.id, acceptedAt: null, revokedAt: null, expiresAt: { gt: acceptedAt } }, data: { acceptedAt } });
     if (!claimed.count) throw Object.assign(new Error("This invitation has already been used or expired."), { status: 409, code: "INVITATION_ALREADY_USED" });
     const activated = await tx.user.updateMany({ where: { id: invitation.userId, active: false, role: UserRole.CUSTOMER }, data: { passwordHash, active: true } });
     if (!activated.count) throw Object.assign(new Error("This customer account is already active. Please sign in."), { status: 409, code: "CUSTOMER_ALREADY_ACTIVE" });

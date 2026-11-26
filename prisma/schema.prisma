@@ -68,6 +68,7 @@ enum CommitmentStatus {
 model User {
   id           String          @id @default(uuid())
   name         String
+  phone        String?
   email        String          @unique
   passwordHash String
   role         UserRole        @default(CUSTOMER)
@@ -91,6 +92,8 @@ model User {
   notifications Notification[] @relation("NotificationRecipient")
   sentNotifications Notification[] @relation("NotificationActor")
   assignedLeads Lead[] @relation("LeadAssignee")
+  receivedInvitations CustomerInvitation[] @relation("InvitationUser")
+  sentInvitations CustomerInvitation[] @relation("InvitationInviter")
 }
 
 model Project {
@@ -564,4 +567,19 @@ model Lead {
   assignedTo   User?      @relation("LeadAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
   @@index([status, createdAt])
   @@index([assignedToId, status, createdAt])
+}
+
+model CustomerInvitation {
+  id          String   @id @default(uuid())
+  userId      String
+  invitedById String
+  email       String
+  tokenHash   String   @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime @default(now())
+  user        User     @relation("InvitationUser", fields: [userId], references: [id], onDelete: Cascade)
+  invitedBy   User     @relation("InvitationInviter", fields: [invitedById], references: [id])
+  @@index([userId, expiresAt])
+  @@index([invitedById, createdAt])
 }

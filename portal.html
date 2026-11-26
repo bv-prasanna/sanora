@@ -90,6 +90,12 @@
           </form>
           <div class="topup-history"><h4>Top-up requests</h4><div id="topUpHistory" class="empty-state">Loading top-up requests…</div></div>
         </section>
+        <section class="panel" id="financeQueuePanel" hidden>
+          <div class="panel-head"><div><span class="eyebrow">FINANCE WORKSPACE</span><h3>Project review queues</h3></div><span class="live-label">ACTION REQUIRED</span></div>
+          <div class="finance-queue-group"><h4>Expense ledger</h4><div id="financeLedgerQueue" class="empty-state">Loading expense reviews…</div></div>
+          <div class="finance-queue-group"><h4>Labour approvals</h4><div id="financeLabourQueue" class="empty-state">Loading labour reviews…</div></div>
+          <div class="finance-queue-group"><h4>Purchase order approvals</h4><div id="financePurchaseQueue" class="empty-state">Loading purchase-order reviews…</div></div>
+        </section>
         <section class="panel" id="financeTopUpPanel" hidden>
           <div class="panel-head"><div><span class="eyebrow">FINANCE WORKSPACE</span><h3>Top-up reconciliation</h3></div><span class="live-label">REVIEW REQUIRED</span></div>
           <p class="panel-note">Verify the payment reference against bank or gateway records before confirming. Confirmation posts the receipt to the project ledger.</p>

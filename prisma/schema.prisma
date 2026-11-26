@@ -83,6 +83,7 @@ model User {
   approvedPurchaseOrders PurchaseOrder[] @relation("PurchaseOrderApprover")
   recordedLabour LabourRecord[] @relation("LabourRecorder")
   authoredProjectUpdates ProjectUpdate[] @relation("ProjectUpdateAuthor")
+  uploadedProjectDocuments ProjectDocument[] @relation("ProjectDocumentUploader")
 }
 
 model Project {
@@ -105,6 +106,7 @@ model Project {
   purchaseOrders PurchaseOrder[]
   labourRecords LabourRecord[]
   updates ProjectUpdate[]
+  documents ProjectDocument[]
   @@index([customerId, status])
 }
 
@@ -332,4 +334,42 @@ model ProjectUpdate {
   createdBy   User                  @relation("ProjectUpdateAuthor", fields: [createdById], references: [id])
   @@index([projectId, recordedAt])
   @@index([createdById, recordedAt])
+}
+
+enum ProjectDocumentStatus {
+  PENDING_UPLOAD
+  AVAILABLE
+  REJECTED
+}
+
+enum ProjectDocumentCategory {
+  DRAWING
+  APPROVAL
+  INVOICE
+  PAYMENT_PROOF
+  MATERIAL_RECEIPT
+  LABOUR_EVIDENCE
+  SITE_PHOTO
+  AGREEMENT
+  OTHER
+}
+
+model ProjectDocument {
+  id              String                  @id @default(uuid())
+  projectId       String
+  uploadedById    String
+  category        ProjectDocumentCategory @default(OTHER)
+  status          ProjectDocumentStatus   @default(PENDING_UPLOAD)
+  originalName    String
+  storageKey      String                  @unique
+  contentType     String
+  sizeBytes       Int
+  customerVisible Boolean                 @default(false)
+  description     String?
+  createdAt       DateTime                @default(now())
+  availableAt     DateTime?
+  project         Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploadedBy      User                    @relation("ProjectDocumentUploader", fields: [uploadedById], references: [id])
+  @@index([projectId, status, category, createdAt])
+  @@index([uploadedById, status])
 }

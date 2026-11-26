@@ -41,6 +41,11 @@ enum EstimateStatus {
   REJECTED
 }
 
+enum EstimateCustomerDecision {
+  ACCEPTED
+  DECLINED
+}
+
 enum LedgerType {
   TOP_UP
   MATERIAL_EXPENSE

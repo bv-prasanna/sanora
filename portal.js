@@ -183,6 +183,43 @@
       await loadProject(activeProjectId);
     } catch (error) { message("#dashboardMessage", error.message, "error"); }
   }
+  function renderEstimates(estimates) {
+    const container = $("#estimateList"); container.replaceChildren();
+    if (!estimates?.length) return empty(container, "No estimates have been created for this project yet.");
+    estimates.forEach(estimate => {
+      const total = (estimate.lines || []).reduce((sum, line) => sum + Number(line.quantity) * Number(line.unitRate), 0);
+      const card = window.document.createElement("article"); card.className = "estimate-item";
+      const head = window.document.createElement("div"); head.className = "estimate-item-head";
+      const title = window.document.createElement("b"); title.textContent = "Version " + estimate.version + " · " + estimate.title;
+      const amount = window.document.createElement("strong"); amount.textContent = money(total);
+      head.append(title, amount);
+      const meta = window.document.createElement("small"); meta.textContent = titleCase(estimate.status) + " · " + (estimate.lines || []).length + " BOQ line(s)" + (estimate.validUntil ? " · Valid until " + date(estimate.validUntil) : "");
+      card.append(head, meta);
+      const details = window.document.createElement("details");
+      const summary = window.document.createElement("summary"); summary.textContent = "View BOQ and assumptions";
+      details.append(summary);
+      (estimate.lines || []).forEach(line => {
+        const item = window.document.createElement("p"); item.className = "estimate-line";
+        item.textContent = line.description + " · " + line.quantity + " " + line.unit + " × " + money(line.unitRate) + " = " + money(Number(line.quantity) * Number(line.unitRate));
+        details.append(item);
+      });
+      if (estimate.assumptions) { const assumptions = window.document.createElement("p"); assumptions.textContent = "Assumptions: " + estimate.assumptions; details.append(assumptions); }
+      if (estimate.exclusions) { const exclusions = window.document.createElement("p"); exclusions.textContent = "Exclusions: " + estimate.exclusions; details.append(exclusions); }
+      card.append(details);
+      if (estimate.status === "SUBMITTED" && ["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role)) {
+        const approve = window.document.createElement("button"); approve.type = "button"; approve.className = "task-action"; approve.textContent = "Approve estimate";
+        approve.addEventListener("click", async () => {
+          approve.disabled = true;
+          try {
+            const result = await api("/estimates/" + encodeURIComponent(estimate.id) + "/approve", { method: "POST", body: "{}" });
+            message("#dashboardMessage", result.message || "Estimate approved.", "info"); await loadProject(activeProjectId);
+          } catch (error) { message("#dashboardMessage", error.message, "error"); approve.disabled = false; }
+        });
+        card.append(approve);
+      }
+      container.append(card);
+    });
+  }
   function renderWorkPlan(plan) {
     const summary = plan.summary || {};
     const percent = Math.max(0, Math.min(100, Number(summary.progressPercent || 0)));
@@ -282,6 +319,7 @@
     renderOrders(orders.purchaseOrders || []);
     renderLabour(labour.labourRecords || []);
     renderSiteUpdates(updates.updates || []).catch(error => empty($("#siteUpdateList"), error.message));
+    renderEstimates(project.estimates || []);
     renderWorkPlan(workPlan);
     renderFinanceQueue(financeQueue || {});
     renderDocuments(project.id).catch(error => empty($("#projectDocuments"), error.message));

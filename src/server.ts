@@ -358,7 +358,7 @@ app.post("/api/estimates/:id/customer-response", authenticate, allow(UserRole.CU
     });
     if (!changed.count) throw Object.assign(new Error("This estimate has already received a customer response."), { status: 409, code: "ESTIMATE_ALREADY_RESPONDED" });
     await audit(tx, req.user!.id, body.decision === EstimateCustomerDecision.ACCEPTED ? "CUSTOMER_ACCEPTED_INDICATIVE_ESTIMATE" : "CUSTOMER_DECLINED_INDICATIVE_ESTIMATE", "Estimate", id, {
-      projectId: current.projectId, version: current.version, decision: body.decision, notes: body.notes
+      projectId: current.projectId, version: current.version, decision: body.decision, notes: body.notes ?? null
     });
     const recipients = new Set([current.createdById, current.project.createdById].filter(value => value !== req.user!.id));
     for (const recipientId of recipients) await notify(tx, {

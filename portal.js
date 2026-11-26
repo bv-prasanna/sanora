@@ -52,7 +52,27 @@
     if (!records?.length) return empty(container, "No labour records have been submitted for this project.");
     records.slice(0, 6).forEach(item => row(container, "◷", item.workerName, titleCase(item.workType) + " · " + date(item.workDate) + " · " + titleCase(item.status), money(item.amount), false));
   }
-  function renderProject(project, ledger, orders, labour) {
+  function renderSiteUpdates(updates) {
+    const container = $("#siteUpdateList"); container.replaceChildren();
+    if (!updates?.length) return empty(container, "No site updates have been recorded for this project yet.");
+    updates.slice(0, 8).forEach(update => {
+      const card = document.createElement("article"); card.className = "site-update";
+      const category = document.createElement("span"); category.className = "eyebrow"; category.textContent = titleCase(update.category);
+      const heading = document.createElement("b"); heading.textContent = update.title;
+      const description = document.createElement("p"); description.textContent = update.description;
+      const meta = document.createElement("small"); meta.textContent = date(update.recordedAt) + " · " + (update.createdBy?.name || "Sanora team");
+      card.append(category, heading, description, meta);
+      if (update.latitude != null && update.longitude != null) {
+        const coords = document.createElement("a");
+        const lat = Number(update.latitude), lon = Number(update.longitude);
+        coords.href = "https://www.google.com/maps?q=" + encodeURIComponent(lat + "," + lon);
+        coords.target = "_blank"; coords.rel = "noopener noreferrer"; coords.textContent = "View recorded location ↗";
+        card.append(coords);
+      }
+      container.append(card);
+    });
+  }
+  function renderProject(project, ledger, orders, labour, updates) {
     const summary = ledger.summary || {};
     setText("#projectCode", project.code);
     setText("#projectName", project.name);
@@ -72,6 +92,7 @@
     renderTransactions(ledger.entries || []);
     renderOrders(orders.purchaseOrders || []);
     renderLabour(labour.labourRecords || []);
+    renderSiteUpdates(updates.updates || []);
     message("#dashboardMessage", ledger.note || "Account figures are calculated from posted ledger entries. Pending items remain separate.", "info");
   }
   async function loadProjects(preferredId) {
@@ -85,6 +106,7 @@
       empty($("#transactions"), "Your project account will appear here when a project is assigned to your account.");
       empty($("#purchaseOrders"), "No project has been assigned.");
       empty($("#labourRecords"), "No project has been assigned.");
+      empty($("#siteUpdateList"), "No project has been assigned.");
       return;
     }
     projects.forEach(project => { const option = document.createElement("option"); option.value = project.id; option.textContent = project.name + " · " + project.code; select.append(option); });
@@ -95,13 +117,14 @@
   async function loadProject(projectId) {
     if (!projectId) return;
     message("#dashboardMessage", "Refreshing project information…", "info");
-    const [projectResult, ledger, orders, labour] = await Promise.all([
+    const [projectResult, ledger, orders, labour, updates] = await Promise.all([
       api("/projects/" + encodeURIComponent(projectId)),
       api("/projects/" + encodeURIComponent(projectId) + "/ledger"),
       api("/projects/" + encodeURIComponent(projectId) + "/purchase-orders"),
-      api("/projects/" + encodeURIComponent(projectId) + "/labour")
+      api("/projects/" + encodeURIComponent(projectId) + "/labour"),
+      api("/projects/" + encodeURIComponent(projectId) + "/updates")
     ]);
-    renderProject(projectResult.project, ledger, orders, labour);
+    renderProject(projectResult.project, ledger, orders, labour, updates);
   }
   async function enterWorkspace() {
     show("dashboard");

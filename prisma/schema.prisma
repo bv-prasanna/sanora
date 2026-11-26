@@ -82,6 +82,7 @@ model User {
   createdPurchaseOrders PurchaseOrder[] @relation("PurchaseOrderCreator")
   approvedPurchaseOrders PurchaseOrder[] @relation("PurchaseOrderApprover")
   recordedLabour LabourRecord[] @relation("LabourRecorder")
+  authoredProjectUpdates ProjectUpdate[] @relation("ProjectUpdateAuthor")
 }
 
 model Project {
@@ -103,6 +104,7 @@ model Project {
   commitments Commitment[]
   purchaseOrders PurchaseOrder[]
   labourRecords LabourRecord[]
+  updates ProjectUpdate[]
   @@index([customerId, status])
 }
 
@@ -304,4 +306,30 @@ model LabourRecord {
   project        Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
   recordedBy     User              @relation("LabourRecorder", fields: [recordedById], references: [id])
   @@index([projectId, workDate, status])
+}
+
+enum ProjectUpdateCategory {
+  SITE_PROGRESS
+  MATERIAL_DELIVERY
+  QUALITY
+  SAFETY
+  MILESTONE
+  GENERAL
+}
+
+model ProjectUpdate {
+  id          String                @id @default(uuid())
+  projectId   String
+  category    ProjectUpdateCategory @default(GENERAL)
+  title       String
+  description String
+  latitude    Decimal?              @db.Decimal(10, 7)
+  longitude   Decimal?              @db.Decimal(10, 7)
+  recordedAt  DateTime              @default(now())
+  createdById String
+  createdAt   DateTime              @default(now())
+  project     Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy   User                  @relation("ProjectUpdateAuthor", fields: [createdById], references: [id])
+  @@index([projectId, recordedAt])
+  @@index([createdById, recordedAt])
 }

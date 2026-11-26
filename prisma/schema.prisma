@@ -86,6 +86,8 @@ model User {
   uploadedProjectDocuments ProjectDocument[] @relation("ProjectDocumentUploader")
   submittedTopUps TopUpRequest[] @relation("TopUpRequester")
   reviewedTopUps TopUpRequest[] @relation("TopUpReviewer")
+  assignedTasks ProjectTask[] @relation("ProjectTaskAssignee")
+  createdTasks ProjectTask[] @relation("ProjectTaskCreator")
 }
 
 model Project {
@@ -110,6 +112,8 @@ model Project {
   updates ProjectUpdate[]
   documents ProjectDocument[]
   topUpRequests TopUpRequest[]
+  milestones ProjectMilestone[]
+  tasks ProjectTask[]
   @@index([customerId, status])
 }
 
@@ -407,4 +411,88 @@ model TopUpRequest {
   @@unique([projectId, reference])
   @@index([projectId, status, submittedAt])
   @@index([requestedById, status])
+}
+
+enum ProjectMilestoneStatus {
+  PLANNED
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
+  CANCELLED
+}
+
+enum ProjectTaskStatus {
+  TODO
+  IN_PROGRESS
+  BLOCKED
+  IN_REVIEW
+  COMPLETED
+  CANCELLED
+}
+
+enum ProjectTaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model ProjectMilestone {
+  id              String                 @id @default(uuid())
+  projectId       String
+  title           String
+  description     String?
+  status          ProjectMilestoneStatus @default(PLANNED)
+  targetDate      DateTime?
+  forecastDate    DateTime?
+  completedAt     DateTime?
+  sequence        Int                    @default(0)
+  customerVisible Boolean                @default(true)
+  createdById     String
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  project         Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks           ProjectTask[]
+  @@index([projectId, sequence, status])
+}
+
+model ProjectTask {
+  id              String             @id @default(uuid())
+  projectId       String
+  milestoneId     String?
+  title           String
+  description     String?
+  workPackage     String?
+  status          ProjectTaskStatus  @default(TODO)
+  priority        ProjectTaskPriority @default(MEDIUM)
+  progressPercent Int                @default(0)
+  startDate       DateTime?
+  dueDate         DateTime?
+  completedAt     DateTime?
+  blockedReason   String?
+  customerVisible Boolean            @default(false)
+  assignedToId    String?
+  createdById     String
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  project         Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  milestone       ProjectMilestone?  @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  assignedTo      User?              @relation("ProjectTaskAssignee", fields: [assignedToId], references: [id])
+  createdBy       User               @relation("ProjectTaskCreator", fields: [createdById], references: [id])
+  blocks          TaskDependency[]   @relation("TaskPredecessor")
+  blockedBy       TaskDependency[]   @relation("TaskSuccessor")
+  @@index([projectId, status, dueDate])
+  @@index([assignedToId, status, dueDate])
+  @@index([milestoneId, status])
+}
+
+model TaskDependency {
+  id            String      @id @default(uuid())
+  predecessorId String
+  successorId   String
+  createdAt     DateTime    @default(now())
+  predecessor   ProjectTask @relation("TaskPredecessor", fields: [predecessorId], references: [id], onDelete: Cascade)
+  successor     ProjectTask @relation("TaskSuccessor", fields: [successorId], references: [id], onDelete: Cascade)
+  @@unique([predecessorId, successorId])
+  @@index([successorId])
 }

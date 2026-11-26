@@ -24,6 +24,7 @@ app.use(helmet());
 app.use(cors({ origin: (process.env.CORS_ORIGIN || "http://localhost:5173").split(",").map(s => s.trim()), credentials: true }));
 app.use(express.json({ limit: "1mb" }));
 app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: "draft-8", legacyHeaders: false }));
+app.use("/api", (_req, res, next) => { res.setHeader("Cache-Control", "no-store, private"); next(); });
 
 type AuthUser = { id: string; email: string; role: UserRole };
 type AuthedRequest = Request & { user?: AuthUser };

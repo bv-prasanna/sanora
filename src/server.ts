@@ -820,13 +820,21 @@ app.post("/api/projects/:id/members", authenticate, allow(UserRole.SUPER_ADMIN, 
   const body = projectMemberSchema.parse(req.body);
   const memberUser = await prisma.user.findFirst({ where: { id: body.userId, active: true, role: { not: UserRole.CUSTOMER } }, select: { id: true, name: true, role: true } });
   if (!memberUser) return res.status(404).json({ error: { code: "STAFF_USER_NOT_FOUND", message: "Select an active staff account." } });
+  const previous = await prisma.projectMember.findUnique({ where: { projectId_userId: { projectId, userId: memberUser.id } } });
   const membership = await prisma.projectMember.upsert({
     where: { projectId_userId: { projectId, userId: memberUser.id } },
     create: { projectId, userId: memberUser.id, access: body.access },
     update: { access: body.access }
   });
-  await prisma.auditLog.create({ data: { actorId: req.user!.id, action: "PROJECT_MEMBER_ASSIGNED", entityType: "ProjectMember", entityId: membership.id, metadata: { projectId, userId: memberUser.id, access: body.access } } });
-  return res.status(201).json({ membership, user: memberUser });
+  await prisma.$transaction(async tx => {
+    await audit(tx, req.user!.id, "PROJECT_MEMBER_ASSIGNED", "ProjectMember", membership.id, { projectId, userId: memberUser.id, access: body.access });
+    if (memberUser.id !== req.user!.id && (!previous || previous.access !== body.access)) await notify(tx, {
+      recipientId: memberUser.id, actorId: req.user!.id, projectId, type: NotificationType.GENERAL,
+      title: "Added to a Sanora project", message: "You have been assigned to a project with " + body.access.toLowerCase() + " access.",
+      entityType: "ProjectMember", entityId: membership.id
+    });
+  });
+  return res.status(201).json({ membership, user: memberUser, message: previous ? "Project access updated." : "Staff member added to project." });
 }));
 
 const projectUpdateSchema = z.object({

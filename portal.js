@@ -162,6 +162,11 @@
       line.append(info, link); container.append(line);
     });
   }
+  function populateVendorSelect(vendors) {
+    const select = $("#poVendor"); select.replaceChildren();
+    const placeholder = window.document.createElement("option"); placeholder.value = ""; placeholder.textContent = vendors.length ? "Select vendor" : "Add a vendor first"; select.append(placeholder);
+    vendors.forEach(vendor => { const option = window.document.createElement("option"); option.value = vendor.id; option.textContent = vendor.name; select.append(option); });
+  }
   function populatePlanningForms(members, milestones) {
     projectMembers = members || [];
     const milestoneSelect = $("#taskMilestone"); milestoneSelect.replaceChildren();
@@ -177,6 +182,43 @@
       message("#dashboardMessage", result.message || "Task updated.", "info");
       await loadProject(activeProjectId);
     } catch (error) { message("#dashboardMessage", error.message, "error"); }
+  }
+  function renderEstimates(estimates) {
+    const container = $("#estimateList"); container.replaceChildren();
+    if (!estimates?.length) return empty(container, "No estimates have been created for this project yet.");
+    estimates.forEach(estimate => {
+      const total = (estimate.lines || []).reduce((sum, line) => sum + Number(line.quantity) * Number(line.unitRate), 0);
+      const card = window.document.createElement("article"); card.className = "estimate-item";
+      const head = window.document.createElement("div"); head.className = "estimate-item-head";
+      const title = window.document.createElement("b"); title.textContent = "Version " + estimate.version + " · " + estimate.title;
+      const amount = window.document.createElement("strong"); amount.textContent = money(total);
+      head.append(title, amount);
+      const meta = window.document.createElement("small"); meta.textContent = titleCase(estimate.status) + " · " + (estimate.lines || []).length + " BOQ line(s)" + (estimate.validUntil ? " · Valid until " + date(estimate.validUntil) : "");
+      card.append(head, meta);
+      const details = window.document.createElement("details");
+      const summary = window.document.createElement("summary"); summary.textContent = "View BOQ and assumptions";
+      details.append(summary);
+      (estimate.lines || []).forEach(line => {
+        const item = window.document.createElement("p"); item.className = "estimate-line";
+        item.textContent = line.description + " · " + line.quantity + " " + line.unit + " × " + money(line.unitRate) + " = " + money(Number(line.quantity) * Number(line.unitRate));
+        details.append(item);
+      });
+      if (estimate.assumptions) { const assumptions = window.document.createElement("p"); assumptions.textContent = "Assumptions: " + estimate.assumptions; details.append(assumptions); }
+      if (estimate.exclusions) { const exclusions = window.document.createElement("p"); exclusions.textContent = "Exclusions: " + estimate.exclusions; details.append(exclusions); }
+      card.append(details);
+      if (estimate.status === "SUBMITTED" && ["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role)) {
+        const approve = window.document.createElement("button"); approve.type = "button"; approve.className = "task-action"; approve.textContent = "Approve estimate";
+        approve.addEventListener("click", async () => {
+          approve.disabled = true;
+          try {
+            const result = await api("/estimates/" + encodeURIComponent(estimate.id) + "/approve", { method: "POST", body: "{}" });
+            message("#dashboardMessage", result.message || "Estimate approved.", "info"); await loadProject(activeProjectId);
+          } catch (error) { message("#dashboardMessage", error.message, "error"); approve.disabled = false; }
+        });
+        card.append(approve);
+      }
+      container.append(card);
+    });
   }
   function renderWorkPlan(plan) {
     const summary = plan.summary || {};
@@ -277,6 +319,7 @@
     renderOrders(orders.purchaseOrders || []);
     renderLabour(labour.labourRecords || []);
     renderSiteUpdates(updates.updates || []).catch(error => empty($("#siteUpdateList"), error.message));
+    renderEstimates(project.estimates || []);
     renderWorkPlan(workPlan);
     renderFinanceQueue(financeQueue || {});
     renderDocuments(project.id).catch(error => empty($("#projectDocuments"), error.message));
@@ -309,7 +352,7 @@
     if (!projectId) return;
     activeProjectId = projectId;
     message("#dashboardMessage", "Refreshing project information…", "info");
-    const [projectResult, ledger, orders, labour, updates, workPlan, members, financeQueue, statementResult] = await Promise.all([
+    const [projectResult, ledger, orders, labour, updates, workPlan, members, financeQueue, statementResult, vendorsResult] = await Promise.all([
       api("/projects/" + encodeURIComponent(projectId)),
       api("/projects/" + encodeURIComponent(projectId) + "/ledger"),
       api("/projects/" + encodeURIComponent(projectId) + "/purchase-orders"),
@@ -318,9 +361,11 @@
       api("/projects/" + encodeURIComponent(projectId) + "/work-plan"),
       (["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role) ? api("/projects/" + encodeURIComponent(projectId) + "/members") : Promise.resolve({ members: [] })),
       (["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role) ? api("/projects/" + encodeURIComponent(projectId) + "/finance-queue") : Promise.resolve({})),
-      api("/projects/" + encodeURIComponent(projectId) + "/statement")
+      api("/projects/" + encodeURIComponent(projectId) + "/statement"),
+      (["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "PROCUREMENT"].includes(currentUser?.role) ? api("/vendors") : Promise.resolve({ vendors: [] }))
     ]);
     populatePlanningForms(members.members || [], workPlan.milestones || []);
+    populateVendorSelect(vendorsResult.vendors || []);
     renderProject(projectResult.project, ledger, orders, labour, updates, workPlan, financeQueue, statementResult.statement);
   }
   async function updateLead(id, changes) {
@@ -438,6 +483,14 @@
     const planningRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role);
     const managerRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER"].includes(currentUser?.role);
     $("#planningControls").hidden = !planningRole;
+    const procurementRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "PROCUREMENT"].includes(currentUser?.role);
+    const estimateRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role);
+    const labourRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role);
+    $("#vendorCreatePanel").hidden = !procurementRole;
+    $("#purchaseOrderCreatePanel").hidden = !procurementRole;
+    $("#estimateCreatePanel").hidden = !estimateRole;
+    $("#labourCreatePanel").hidden = !labourRole;
+    $("#staffOperationsForms").hidden = !procurementRole && !estimateRole && !labourRole;
     $("#siteUpdateForm").hidden = !planningRole;
     $("#siteUpdateVisibilityLabel").hidden = !managerRole;
     $("#milestoneVisibilityLabel").hidden = !managerRole;
@@ -556,6 +609,65 @@
       message("#siteUpdateMessage", error.message, "error");
       await loadProject(activeProjectId).catch(() => undefined);
     } finally { button.disabled = false; button.textContent = "Save site update"; }
+  });
+  $("#vendorCreateForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    const formElement = event.currentTarget; const form = new FormData(formElement);
+    try {
+      const result = await api("/vendors", { method: "POST", body: JSON.stringify({
+        name: form.get("name"), contactName: form.get("contactName") || undefined,
+        phone: form.get("phone") || undefined, email: form.get("email") || undefined,
+        gstin: form.get("gstin") || undefined, address: form.get("address") || undefined
+      }) });
+      message("#vendorFormMessage", "Vendor saved: " + result.vendor.name, "info"); formElement.reset();
+      const vendors = await api("/vendors"); populateVendorSelect(vendors.vendors || []);
+    } catch (error) { message("#vendorFormMessage", error.message, "error"); }
+  });
+  $("#purchaseOrderCreateForm").addEventListener("submit", async event => {
+    event.preventDefault(); if (!activeProjectId) return;
+    const formElement = event.currentTarget; const form = new FormData(formElement);
+    const quantity = Number(form.get("quantity")), unitRate = Number(form.get("unitRate"));
+    if (!Number.isFinite(quantity) || !Number.isFinite(unitRate)) return message("#poFormMessage", "Enter a valid quantity and unit rate.", "error");
+    try {
+      const created = await api("/projects/" + encodeURIComponent(activeProjectId) + "/purchase-orders", {
+        method: "POST", body: JSON.stringify({ vendorId: form.get("vendorId"), notes: form.get("notes") || undefined,
+          lines: [{ description: form.get("description"), quantity, unit: form.get("unit"), unitRate }] })
+      });
+      const submitted = await api("/purchase-orders/" + encodeURIComponent(created.purchaseOrder.id) + "/submit", { method: "POST", body: "{}" });
+      message("#poFormMessage", submitted.message || "Purchase order submitted for Finance approval.", "info");
+      formElement.reset(); await loadProject(activeProjectId); await loadOperationsSummary().catch(() => undefined);
+    } catch (error) { message("#poFormMessage", error.message, "error"); }
+  });
+  $("#estimateCreateForm").addEventListener("submit", async event => {
+    event.preventDefault(); if (!activeProjectId) return;
+    const formElement = event.currentTarget; const form = new FormData(formElement);
+    const quantity = Number(form.get("quantity")), unitRate = Number(form.get("unitRate"));
+    if (!Number.isFinite(quantity) || !Number.isFinite(unitRate)) return message("#estimateFormMessage", "Enter a valid quantity and unit rate.", "error");
+    try {
+      const created = await api("/projects/" + encodeURIComponent(activeProjectId) + "/estimates", {
+        method: "POST", body: JSON.stringify({ title: form.get("title"), assumptions: form.get("assumptions") || undefined,
+          exclusions: form.get("exclusions") || undefined,
+          lines: [{ category: form.get("category"), description: form.get("description"), quantity, unit: form.get("unit"), unitRate }] })
+      });
+      const submitted = await api("/estimates/" + encodeURIComponent(created.estimate.id) + "/submit", { method: "POST", body: "{}" });
+      message("#estimateFormMessage", "Estimate v" + created.estimate.version + " submitted. Indicative total: " + money(created.indicativeTotal) + ". " + (submitted.message || ""), "info");
+      formElement.reset(); await loadProject(activeProjectId);
+    } catch (error) { message("#estimateFormMessage", error.message, "error"); }
+  });
+  $("#labourCreateForm").addEventListener("submit", async event => {
+    event.preventDefault(); if (!activeProjectId) return;
+    const formElement = event.currentTarget; const form = new FormData(formElement);
+    const quantity = Number(form.get("quantity")), rate = Number(form.get("rate"));
+    if (!Number.isFinite(quantity) || !Number.isFinite(rate)) return message("#labourFormMessage", "Enter a valid quantity and rate.", "error");
+    try {
+      const result = await api("/projects/" + encodeURIComponent(activeProjectId) + "/labour", {
+        method: "POST", body: JSON.stringify({ workerName: form.get("workerName"), workType: form.get("workType"),
+          workDate: new Date(String(form.get("workDate")) + "T00:00:00.000Z").toISOString(),
+          description: form.get("description"), quantity, unit: form.get("unit"), rate })
+      });
+      message("#labourFormMessage", result.message, "info"); formElement.reset();
+      await loadProject(activeProjectId); await loadOperationsSummary().catch(() => undefined);
+    } catch (error) { message("#labourFormMessage", error.message, "error"); }
   });
   $("#milestoneForm").addEventListener("submit", async event => {
     event.preventDefault();

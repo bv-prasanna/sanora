@@ -74,6 +74,10 @@
           <div class="hero-meta"><div><small>PROJECT CODE</small><b id="heroProjectCode">—</b></div><div><small>APPROVED ESTIMATE</small><b id="approvedEstimate">Not yet approved</b></div><div><small>LAST UPDATED</small><b id="lastUpdated">—</b></div></div>
         </div>
       </section>
+      <section class="panel estimate-history-panel" id="estimateHistory">
+        <div class="panel-head"><div><span class="eyebrow">ESTIMATE REGISTER</span><h3>Plan-based estimates</h3></div><span class="live-label">VERSIONED</span></div>
+        <div id="estimateList" class="estimate-list empty-state">Loading estimates…</div>
+      </section>
       <div id="dashboardMessage" class="dashboard-message" role="status" aria-live="polite"></div>
       <section class="metric-grid" id="account">
         <article><small>FUNDS RECEIVED</small><strong id="fundsReceived">—</strong><span class="metric-foot">Verified and posted top-ups</span></article>
@@ -112,6 +116,56 @@
           <p class="panel-note">Verify the payment reference against bank or gateway records before confirming. Confirmation posts the receipt to the project ledger.</p>
           <div id="financeTopUpHistory" class="empty-state">Loading requests for this project…</div>
         </section>
+        <div id="staffOperationsForms" class="operations-form-grid" hidden>
+          <section class="panel" id="estimateCreatePanel">
+            <div class="panel-head"><div><span class="eyebrow">ESTIMATION</span><h3>Create indicative estimate</h3></div></div>
+            <form id="estimateCreateForm" class="staff-form">
+              <label for="estimateTitle">Estimate title</label><input id="estimateTitle" name="title" required minlength="2" maxlength="160" placeholder="Initial project estimate">
+              <label for="estimateCategory">Line category</label><select id="estimateCategory" name="category"><option value="MATERIAL">Material</option><option value="LABOUR">Labour</option><option value="SERVICE">Service</option><option value="OTHER">Other</option></select>
+              <label for="estimateDescription">BOQ line description</label><input id="estimateDescription" name="description" required minlength="2" maxlength="240" placeholder="e.g. Structural steel fabrication">
+              <div class="form-row"><div><label for="estimateQuantity">Quantity</label><input id="estimateQuantity" name="quantity" type="number" min="0.001" step="0.001" required></div><div><label for="estimateUnit">Unit</label><input id="estimateUnit" name="unit" required maxlength="24" placeholder="kg / sq.ft / nos"></div></div>
+              <label for="estimateRate">Indicative unit rate (₹)</label><input id="estimateRate" name="unitRate" type="number" min="0" step="0.01" required>
+              <label for="estimateAssumptions">Assumptions</label><textarea id="estimateAssumptions" name="assumptions" rows="2" maxlength="4000"></textarea>
+              <label for="estimateExclusions">Exclusions</label><textarea id="estimateExclusions" name="exclusions" rows="2" maxlength="4000"></textarea>
+              <button type="submit">Create and submit estimate</button><p id="estimateFormMessage" class="form-message" role="status"></p>
+            </form>
+          </section>
+          <section class="panel" id="vendorCreatePanel">
+            <div class="panel-head"><div><span class="eyebrow">PROCUREMENT</span><h3>Add vendor</h3></div></div>
+            <form id="vendorCreateForm" class="staff-form">
+              <label for="vendorName">Vendor / supplier name</label><input id="vendorName" name="name" required minlength="2" maxlength="180">
+              <label for="vendorContact">Contact person</label><input id="vendorContact" name="contactName" maxlength="120">
+              <label for="vendorPhone">Phone</label><input id="vendorPhone" name="phone" maxlength="30">
+              <label for="vendorEmail">Email</label><input id="vendorEmail" name="email" type="email">
+              <label for="vendorGstin">GSTIN</label><input id="vendorGstin" name="gstin" maxlength="20">
+              <label for="vendorAddress">Address</label><textarea id="vendorAddress" name="address" rows="2" maxlength="500"></textarea>
+              <button type="submit">Save vendor</button><p id="vendorFormMessage" class="form-message" role="status"></p>
+            </form>
+          </section>
+          <section class="panel" id="purchaseOrderCreatePanel">
+            <div class="panel-head"><div><span class="eyebrow">PROCUREMENT</span><h3>Create purchase order</h3></div></div>
+            <form id="purchaseOrderCreateForm" class="staff-form">
+              <label for="poVendor">Vendor</label><select id="poVendor" name="vendorId" required><option value="">Select vendor</option></select>
+              <label for="poDescription">Line description</label><input id="poDescription" name="description" required minlength="2" maxlength="240">
+              <div class="form-row"><div><label for="poQuantity">Quantity</label><input id="poQuantity" name="quantity" type="number" min="0.001" step="0.001" required></div><div><label for="poUnit">Unit</label><input id="poUnit" name="unit" required maxlength="24" placeholder="kg / nos"></div></div>
+              <label for="poRate">Unit rate (₹)</label><input id="poRate" name="unitRate" type="number" min="0" step="0.01" required>
+              <label for="poNotes">Notes</label><textarea id="poNotes" name="notes" rows="2" maxlength="2000"></textarea>
+              <button type="submit">Create and submit for approval</button><p id="poFormMessage" class="form-message" role="status"></p>
+            </form>
+          </section>
+          <section class="panel" id="labourCreatePanel">
+            <div class="panel-head"><div><span class="eyebrow">SITE OPERATIONS</span><h3>Record labour</h3></div></div>
+            <form id="labourCreateForm" class="staff-form">
+              <label for="labourWorker">Worker / contractor name</label><input id="labourWorker" name="workerName" required minlength="2" maxlength="160">
+              <label for="labourWorkType">Work type</label><input id="labourWorkType" name="workType" required minlength="2" maxlength="100" placeholder="Fabrication / masonry / installation">
+              <label for="labourWorkDate">Work date</label><input id="labourWorkDate" name="workDate" type="date" required>
+              <label for="labourDescription">Work description</label><textarea id="labourDescription" name="description" rows="2" required minlength="3" maxlength="500"></textarea>
+              <div class="form-row"><div><label for="labourQuantity">Quantity</label><input id="labourQuantity" name="quantity" type="number" min="0.001" step="0.001" required></div><div><label for="labourUnit">Unit</label><input id="labourUnit" name="unit" required maxlength="24" placeholder="day / sq.ft"></div></div>
+              <label for="labourRate">Rate (₹)</label><input id="labourRate" name="rate" type="number" min="0" step="0.01" required>
+              <button type="submit">Submit labour record</button><p id="labourFormMessage" class="form-message" role="status"></p>
+            </form>
+          </section>
+        </div>
         <section class="panel" id="labour"><div class="panel-head"><div><span class="eyebrow">SITE OPERATIONS</span><h3>Labour records</h3></div></div><div id="labourRecords" class="empty-state">Loading labour records…</div></section>
         <section class="panel" id="siteUpdates">
           <div class="panel-head"><div><span class="eyebrow">SITE DIARY</span><h3>Recent site updates</h3></div><span class="live-label">GPS & PHOTO EVIDENCE</span></div>

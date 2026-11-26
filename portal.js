@@ -370,7 +370,7 @@
       const body = window.document.createElement("p"); body.textContent = notification.message;
       const meta = window.document.createElement("small"); meta.textContent = [notification.project?.code, date(notification.createdAt)].filter(Boolean).join(" · ");
       item.append(heading, body, meta);
-      const action = window.document.createElement("button"); action.type = "button"; action.textContent = notification.projectId ? "Open project" : notification.readAt ? "Read" : "Mark read";
+      const action = window.document.createElement("button"); action.type = "button"; action.textContent = notification.projectId ? "Open project" : notification.entityType === "Lead" ? "Open enquiry" : notification.readAt ? "Read" : "Mark read";
       action.addEventListener("click", async () => {
         try {
           if (!notification.readAt) await api("/notifications/" + encodeURIComponent(notification.id) + "/read", { method: "POST", body: "{}" });
@@ -378,6 +378,9 @@
             $("#notificationPanel").hidden = true; $("#notificationButton").setAttribute("aria-expanded", "false");
             $("#projectSelect").value = notification.projectId; await loadProject(notification.projectId);
             $("#overview").scrollIntoView({ behavior: "smooth", block: "start" });
+          } else if (notification.entityType === "Lead") {
+            $("#notificationPanel").hidden = true; $("#notificationButton").setAttribute("aria-expanded", "false");
+            await loadLeads(); $("#leadInbox").scrollIntoView({ behavior: "smooth", block: "start" });
           } else await loadNotifications();
         } catch (error) { message("#dashboardMessage", error.message, "error"); }
       });

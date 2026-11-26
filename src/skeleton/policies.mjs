@@ -18,20 +18,16 @@ export function hasSanoraPermission(roles, action) {
 }
 export function redactAuditMetadata(metadata) { return redact(metadata); }
 export function estimateProjectTotal(lines) {
-  const quote = calculateQuote({
-    tenantId: "sanora-single-tenant",
-    unitPriceMinor: 0,
-    quantity: 1,
-    currency: "INR"
-  });
   const totalMinor = lines.reduce((sum, line) => {
     const quantityMilli = Math.round(Number(line.quantity) * 1000);
     const ratePaise = Math.round(Number(line.unitRate) * 100);
     if (!Number.isSafeInteger(quantityMilli) || quantityMilli <= 0 || !Number.isSafeInteger(ratePaise) || ratePaise < 0) throw new Error("Invalid BOQ quantity or rate");
-    const linePaise = Math.round(quantityMilli * ratePaise / 1000);
-    if (!Number.isSafeInteger(linePaise) || !Number.isSafeInteger(sum + linePaise)) throw new Error("BOQ total exceeds safe range");
-    return sum + linePaise;
-  }, quote.totalMinor);
+    const unitMinor = Math.round(quantityMilli * ratePaise / 1000);
+    if (!Number.isSafeInteger(unitMinor)) throw new Error("BOQ line exceeds safe range");
+    const lineQuote = calculateQuote({ tenantId: "sanora-single-tenant", unitPriceMinor: unitMinor, quantity: 1, currency: "INR" });
+    if (!Number.isSafeInteger(sum + lineQuote.totalMinor)) throw new Error("BOQ total exceeds safe range");
+    return sum + lineQuote.totalMinor;
+  }, 0);
   return { totalPaise: totalMinor, totalRupees: (totalMinor / 100).toFixed(2), currency: "INR" };
 }
 const projectWorkflow = createWorkflow({

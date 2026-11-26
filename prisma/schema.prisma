@@ -577,11 +577,14 @@ model Lead {
   status       LeadStatus @default(NEW)
   assignedToId String?
   internalNotes String?
+  propertyListingId String?
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
   assignedTo   User?      @relation("LeadAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  propertyListing PropertyListing? @relation(fields: [propertyListingId], references: [id], onDelete: SetNull)
   @@index([status, createdAt])
   @@index([assignedToId, status, createdAt])
+  @@index([propertyListingId, createdAt])
 }
 
 model CustomerInvitation {
@@ -598,4 +601,84 @@ model CustomerInvitation {
   invitedBy   User     @relation("InvitationInviter", fields: [invitedById], references: [id])
   @@index([userId, expiresAt])
   @@index([invitedById, createdAt])
+}
+
+enum PropertyCategory {
+  VILLA
+  PLOT
+  FLAT
+  AGRICULTURAL_LAND
+  FARM_LAND
+  LAYOUT
+  INDEPENDENT_HOUSE
+  COMMERCIAL
+  LAND_PARCEL
+  OTHER
+}
+
+enum PropertyListingStatus {
+  DRAFT
+  INTERNAL_REVIEW
+  APPROVED
+  PUBLISHED
+  RESERVED
+  SOLD
+  WITHDRAWN
+}
+
+enum PropertyUnitStatus {
+  AVAILABLE
+  RESERVED
+  BOOKED
+  SOLD
+  WITHDRAWN
+}
+
+model PropertyListing {
+  id             String                @id @default(uuid())
+  code           String                @unique
+  category       PropertyCategory
+  name           String
+  projectName    String?
+  description    String?
+  location       String
+  latitude       Decimal?              @db.Decimal(10, 7)
+  longitude      Decimal?              @db.Decimal(10, 7)
+  surveyIdentifier String?
+  area           Decimal?              @db.Decimal(14, 3)
+  areaUnit       String?
+  dimensions     String?
+  facing         String?
+  roadWidth      Decimal?              @db.Decimal(10, 2)
+  askingPrice    Decimal?              @db.Decimal(14, 2)
+  pricePerArea   Decimal?              @db.Decimal(14, 2)
+  status         PropertyListingStatus @default(DRAFT)
+  createdById    String
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  createdBy      User                  @relation("PropertyListingCreator", fields: [createdById], references: [id])
+  units          PropertyUnit[]
+  leads          Lead[]
+  @@index([status, category, createdAt])
+  @@index([location, status])
+}
+
+model PropertyUnit {
+  id            String            @id @default(uuid())
+  listingId     String
+  unitNumber    String
+  dimensions    String?
+  area          Decimal?          @db.Decimal(14, 3)
+  areaUnit      String?
+  facing        String?
+  roadWidth     Decimal?          @db.Decimal(10, 2)
+  floor         String?
+  builtUpArea   Decimal?          @db.Decimal(14, 3)
+  askingPrice   Decimal?          @db.Decimal(14, 2)
+  status        PropertyUnitStatus @default(AVAILABLE)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  listing       PropertyListing   @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  @@unique([listingId, unitNumber])
+  @@index([listingId, status])
 }

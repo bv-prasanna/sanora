@@ -1170,6 +1170,17 @@ async function validateTaskAssignee(projectId: string, userId: string) {
   const membership = await prisma.projectMember.findFirst({ where: { projectId, userId, access: { in: ["UPDATE", "MANAGE"] } }, select: { id: true } });
   return membership ? assignee : null;
 }
+
+const projectManagerRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER];
+app.get("/api/staff", authenticate, allow(...projectManagerRoles), asyncRoute(async (_req, res) => {
+  const staff = await prisma.user.findMany({
+    where: { active: true, role: { not: UserRole.CUSTOMER } },
+    select: { id: true, name: true, role: true },
+    orderBy: { name: "asc" }, take: 500
+  });
+  return res.json({ staff });
+}));
+
 app.get("/api/projects/:id/members", authenticate, asyncRoute(async (req, res) => {
   const projectId = routeParam(req, "id");
   if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
@@ -1178,11 +1189,27 @@ app.get("/api/projects/:id/members", authenticate, asyncRoute(async (req, res) =
     prisma.project.findUnique({ where: { id: projectId }, include: { createdBy: { select: { id: true, name: true, role: true, active: true } } } }),
     prisma.projectMember.findMany({ where: { projectId, user: { active: true, role: { not: UserRole.CUSTOMER } } }, include: { user: { select: { id: true, name: true, role: true } } } })
   ]);
-  const staff = new Map<string, { id: string; name: string; role: UserRole }>();
-  if (project?.createdBy.active && project.createdBy.role !== UserRole.CUSTOMER) staff.set(project.createdBy.id, { id: project.createdBy.id, name: project.createdBy.name, role: project.createdBy.role });
-  memberships.forEach(member => staff.set(member.user.id, member.user));
+  const staff = new Map<string, { id: string; name: string; role: UserRole; access: string; isCreator: boolean }>();
+  if (project?.createdBy.active && project.createdBy.role !== UserRole.CUSTOMER) staff.set(project.createdBy.id, { id: project.createdBy.id, name: project.createdBy.name, role: project.createdBy.role, access: "MANAGE", isCreator: true });
+  memberships.forEach(member => staff.set(member.user.id, { ...member.user, access: member.access, isCreator: member.user.id === project?.createdById }));
   return res.json({ members: [...staff.values()] });
 }));
+
+app.delete("/api/projects/:id/members/:userId", authenticate, allow(...projectManagerRoles), asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  const userId = routeParam(req, "userId");
+  if (!(await projectAccess(req.user!, projectId, "MANAGE"))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const project = await prisma.project.findUnique({ where: { id: projectId }, select: { customerId: true, createdById: true } });
+  if (!project || project.createdById === userId || project.customerId === userId) return res.status(400).json({ error: { code: "CORE_PROJECT_MEMBER_PROTECTED", message: "The project creator and customer cannot be removed from the project." } });
+  const membership = await prisma.projectMember.findUnique({ where: { projectId_userId: { projectId, userId } } });
+  if (!membership) return res.status(404).json({ error: { code: "PROJECT_MEMBER_NOT_FOUND", message: "Project team member was not found." } });
+  await prisma.$transaction(async tx => {
+    await tx.projectMember.delete({ where: { id: membership.id } });
+    await audit(tx, req.user!.id, "PROJECT_MEMBER_REMOVED", "ProjectMember", membership.id, { projectId, userId });
+  });
+  return res.json({ message: "Project team member removed." });
+}));
+
 app.get("/api/projects/:id/work-plan", authenticate, asyncRoute(async (req, res) => {
   const projectId = routeParam(req, "id");
   if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });

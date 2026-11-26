@@ -53,7 +53,8 @@ const allow = (...roles: UserRole[]) => (req: AuthedRequest, res: Response, next
   if (!req.user || !roles.includes(req.user.role) || !hasSanoraPermission([req.user.role], "edit")) return res.status(403).json({ error: { code: "ACCESS_DENIED", message: "You do not have permission to perform this action." } });
   next();
 };
-const staffRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.SITE_ENGINEER, UserRole.PROCUREMENT, UserRole.FINANCE];
+const staffRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER, UserRole.SALES, UserRole.SITE_ENGINEER, UserRole.PROCUREMENT, UserRole.FINANCE];
+const expenseRoles: UserRole[] = staffRoles.filter(role => role !== UserRole.SALES);
 const financeRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.FINANCE];
 const projectAccess = async (user: AuthUser, projectId: string) => {
   if (user.role !== UserRole.CUSTOMER) return true;
@@ -190,7 +191,7 @@ app.post("/api/projects/:id/ledger", authenticate, asyncRoute(async (req, res) =
   if (req.user!.role === UserRole.CUSTOMER && body.type !== "TOP_UP") return res.status(403).json({ error: { code: "CUSTOMER_LEDGER_RESTRICTED", message: "Customers can submit top-up receipts. Expense entries are recorded by authorised project staff." } });
   if (body.type === "TOP_UP" && !([...financeRoles, UserRole.CUSTOMER] as UserRole[]).includes(req.user!.role)) return res.status(403).json({ error: { code: "TOP_UP_ROLE_REQUIRED", message: "Only customers or finance staff can record a top-up receipt." } });
   if (body.type === "REFUND" && !financeRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "FINANCE_APPROVAL_REQUIRED", message: "Only finance-authorised users can submit project refunds." } });
-  if (body.type !== "TOP_UP" && !staffRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "STAFF_ROLE_REQUIRED", message: "Only authorised project staff can submit expenses." } });
+  if (body.type !== "TOP_UP" && !expenseRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "STAFF_ROLE_REQUIRED", message: "Only authorised project or finance staff can submit expenses." } });
   const key = req.header("Idempotency-Key");
   if (!key || key.length < 8 || key.length > 120) return res.status(400).json({ error: { code: "IDEMPOTENCY_KEY_REQUIRED", message: "Provide a unique Idempotency-Key header for this transaction." } });
   const entry = await prisma.$transaction(async tx => {

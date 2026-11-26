@@ -2,31 +2,33 @@
 
 **Smart Spaces, Better Life.**
 
-Premium corporate website and customer project-portal starter for Sanora Spaces.
+Premium public website and project operations platform for Sanora Spaces.
 
 ## Current experience
-- `index.html`: responsive public website covering residential, industrial/PEB, property and project-support services.
-- `portal.html`: responsive customer project overview prototype with project milestones, project-funds summary, expense activity and document centre.
-- `styles.css`, `app.js`: public website styles and interactions.
-- `portal.css`, `portal.js`: customer portal styles and interactions.
+- `index.html`: responsive public website for PEB/factory sheds, warehouses, farm villas, plots, property listings and construction support.
+- `portal.html`: authenticated customer project workspace with live project, ledger, procurement, labour, site diary and customer-shareable document data.
+- `src/server.ts`: Express API for authentication, project access, estimates, ledger, procurement, labour, GPS site diary and private document operations.
+- `prisma/schema.prisma`: PostgreSQL data model.
+- `vendor/app-skeleton`: pinned shared platform foundation for common authorization, workflow, audit, billing and related contracts.
 
 ## Run locally
-Open `index.html` in a browser. Open `portal.html` to inspect the customer portal prototype. No build step is required for this first static UI milestone.
-
-## Important prototype boundary
-The portal currently uses illustrative sample records. It is not connected to authentication, a database, payment gateway, file storage, or live project operations. Do not use sample balances, documents, customer identities or transactions as real records. Production release requires backend APIs, role/project authorization, audit-safe financial ledgers, secure document storage, payment reconciliation and automated tests.
+- Node.js 20+
+- PostgreSQL
+- Configure environment variables as described in `docs/SECURE-DOCUMENT-STORAGE.md` and the deployment notes.
+- Install dependencies with `npm install`.
+- Generate Prisma client with `npm run db:generate`.
+- Validate schema with `npx prisma validate`.
+- Apply schema to a development database with `npm run db:push`.
+- Start API using `npm run dev`.
+- Serve the static website from a local web server; the customer portal expects the API under same-origin `/api` by default. Set the `api-base-url` meta tag for a separate API host.
 
 ## Construction commercial model
-Sanora's intended construction model is based on actual project-specific material and labour costs, not a fixed turnkey price or fixed per-square-foot package. The initial plan-based estimate is indicative and must identify assumptions, quantities and rates. Customer top-ups are recorded as project receipts. Actual approved material and labour expenses are posted with vendor/worker, quantities, rates, bills and payment evidence. The project account shows receipts, actual expenses, pending commitments and available balance separately. Estimates are not guarantees; variations and customer approvals must be visible.
+Sanora's construction execution model is based on actual project-specific material and labour costs, not a fixed turnkey price or fixed per-square-foot package. The initial plan-based estimate is indicative and must identify assumptions, quantities and rates. Customer top-ups are receipts, actual approved material and labour expenses are posted separately, and pending commitments remain distinct from available funds. See `docs/CONSTRUCTION-FUNDING-MODEL.md`.
 
-## Next implementation milestones
-1. Technical foundation: application framework, API, database, authentication, RBAC and audit trail.
-2. Customer and project onboarding, estimate/BOQ versions and approval workflow.
-3. Project-funds ledger, top-ups, expense posting, commitments and reconciliations.
-4. Procurement, labour measurement, site diary, photos and document control.
-5. Role-based operations portal and customer project portal.
-6. Property catalogue, branches, referral programmes and monthly settlement.
-7. Security, negative-path tests, accessibility, performance and deployment.
+## Delivery status
+Implemented foundations include authentication and role permissions, project-scoped access, estimate and project ledger workflows, vendor/purchase orders/material receipts, labour records, GPS site diary, customer portal live-data integration and private object-storage upload/download URL workflows.
+
+Production launch still requires configured private storage, bucket CORS and access policies, malware scanning/operational document review, deployment secrets, payment gateway reconciliation, secure session hardening, automated end-to-end tests, backup/restore verification and business/legal/accounting sign-off for handling project funds.
 
 ## Contact
 Sanora Spaces · Bengaluru, Karnataka · +91 82960 22107 · info@sanoraspaces.com

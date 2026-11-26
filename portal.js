@@ -174,6 +174,35 @@
       container.append(line);
     });
   }
+  function renderProjectTeam(members, staff) {
+    const container = $("#projectTeamList"); container.replaceChildren();
+    const select = $("#projectStaffSelect"); select.replaceChildren();
+    const placeholder = window.document.createElement("option"); placeholder.value = ""; placeholder.textContent = staff.length ? "Select staff member" : "No active staff accounts"; select.append(placeholder);
+    staff.forEach(person => {
+      const option = window.document.createElement("option"); option.value = person.id; option.textContent = person.name + " · " + titleCase(person.role); select.append(option);
+    });
+    if (!members.length) return empty(container, "No staff members have been assigned to this project yet.");
+    members.forEach(member => {
+      const rowNode = window.document.createElement("div"); rowNode.className = "team-member-row";
+      const info = window.document.createElement("div");
+      const name = window.document.createElement("b"); name.textContent = member.name;
+      const meta = window.document.createElement("small"); meta.textContent = titleCase(member.role) + " · " + titleCase(member.access) + (member.isCreator ? " · Project creator" : "");
+      info.append(name, meta); rowNode.append(info);
+      if (!member.isCreator) {
+        const remove = window.document.createElement("button"); remove.type = "button"; remove.className = "task-action secondary-decline"; remove.textContent = "Remove";
+        remove.addEventListener("click", async () => {
+          if (!window.confirm("Remove " + member.name + " from this project? Their project access will be revoked.")) return;
+          remove.disabled = true;
+          try {
+            const result = await api("/projects/" + encodeURIComponent(activeProjectId) + "/members/" + encodeURIComponent(member.id), { method: "DELETE" });
+            message("#projectMemberMessage", result.message, "info"); await loadProject(activeProjectId);
+          } catch (error) { message("#projectMemberMessage", error.message, "error"); remove.disabled = false; }
+        });
+        rowNode.append(remove);
+      }
+      container.append(rowNode);
+    });
+  }
   function populateVendorSelect(vendors) {
     const select = $("#poVendor"); select.replaceChildren();
     const placeholder = window.document.createElement("option"); placeholder.value = ""; placeholder.textContent = vendors.length ? "Select vendor" : "Add a vendor first"; select.append(placeholder);
@@ -393,7 +422,7 @@
     if (!projectId) return;
     activeProjectId = projectId;
     message("#dashboardMessage", "Refreshing project information…", "info");
-    const [projectResult, ledger, orders, labour, updates, workPlan, members, financeQueue, statementResult, vendorsResult] = await Promise.all([
+    const [projectResult, ledger, orders, labour, updates, workPlan, members, financeQueue, statementResult, vendorsResult, staffDirectory] = await Promise.all([
       api("/projects/" + encodeURIComponent(projectId)),
       api("/projects/" + encodeURIComponent(projectId) + "/ledger"),
       api("/projects/" + encodeURIComponent(projectId) + "/purchase-orders"),
@@ -403,10 +432,12 @@
       (["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role) ? api("/projects/" + encodeURIComponent(projectId) + "/members") : Promise.resolve({ members: [] })),
       (["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role) ? api("/projects/" + encodeURIComponent(projectId) + "/finance-queue") : Promise.resolve({})),
       api("/projects/" + encodeURIComponent(projectId) + "/statement"),
-      (["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "PROCUREMENT"].includes(currentUser?.role) ? api("/vendors") : Promise.resolve({ vendors: [] }))
+      (["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "PROCUREMENT"].includes(currentUser?.role) ? api("/vendors") : Promise.resolve({ vendors: [] })),
+      (["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER"].includes(currentUser?.role) ? api("/staff") : Promise.resolve({ staff: [] }))
     ]);
     populatePlanningForms(members.members || [], workPlan.milestones || []);
     populateVendorSelect(vendorsResult.vendors || []);
+    renderProjectTeam(members.members || [], staffDirectory.staff || []);
     renderProject(projectResult.project, ledger, orders, labour, updates, workPlan, financeQueue, statementResult.statement);
   }
   async function loadCustomers() {
@@ -535,6 +566,7 @@
     const planningRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role);
     const managerRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER"].includes(currentUser?.role);
     $("#planningControls").hidden = !planningRole;
+    $("#projectTeamPanel").hidden = !managerRole;
     const procurementRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "PROCUREMENT"].includes(currentUser?.role);
     const estimateRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role);
     const labourRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role);
@@ -693,6 +725,19 @@
       message("#siteUpdateMessage", error.message, "error");
       await loadProject(activeProjectId).catch(() => undefined);
     } finally { button.disabled = false; button.textContent = "Save site update"; }
+  });
+  $("#projectMemberForm").addEventListener("submit", async event => {
+    event.preventDefault(); if (!activeProjectId) return;
+    const form = new FormData(event.currentTarget);
+    const button = event.currentTarget.querySelector('button[type="submit"]'); button.disabled = true;
+    try {
+      const result = await api("/projects/" + encodeURIComponent(activeProjectId) + "/members", {
+        method: "POST", body: JSON.stringify({ userId: form.get("userId"), access: form.get("access") })
+      });
+      message("#projectMemberMessage", result.message || "Project team access updated.", "info");
+      event.currentTarget.reset(); await loadProject(activeProjectId);
+    } catch (error) { message("#projectMemberMessage", error.message, "error"); }
+    finally { button.disabled = false; }
   });
   $("#customerInviteForm").addEventListener("submit", async event => {
     event.preventDefault();

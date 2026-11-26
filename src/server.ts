@@ -820,13 +820,21 @@ app.post("/api/projects/:id/members", authenticate, allow(UserRole.SUPER_ADMIN, 
   const body = projectMemberSchema.parse(req.body);
   const memberUser = await prisma.user.findFirst({ where: { id: body.userId, active: true, role: { not: UserRole.CUSTOMER } }, select: { id: true, name: true, role: true } });
   if (!memberUser) return res.status(404).json({ error: { code: "STAFF_USER_NOT_FOUND", message: "Select an active staff account." } });
+  const previous = await prisma.projectMember.findUnique({ where: { projectId_userId: { projectId, userId: memberUser.id } } });
   const membership = await prisma.projectMember.upsert({
     where: { projectId_userId: { projectId, userId: memberUser.id } },
     create: { projectId, userId: memberUser.id, access: body.access },
     update: { access: body.access }
   });
-  await prisma.auditLog.create({ data: { actorId: req.user!.id, action: "PROJECT_MEMBER_ASSIGNED", entityType: "ProjectMember", entityId: membership.id, metadata: { projectId, userId: memberUser.id, access: body.access } } });
-  return res.status(201).json({ membership, user: memberUser });
+  await prisma.$transaction(async tx => {
+    await audit(tx, req.user!.id, "PROJECT_MEMBER_ASSIGNED", "ProjectMember", membership.id, { projectId, userId: memberUser.id, access: body.access });
+    if (memberUser.id !== req.user!.id && (!previous || previous.access !== body.access)) await notify(tx, {
+      recipientId: memberUser.id, actorId: req.user!.id, projectId, type: NotificationType.GENERAL,
+      title: "Added to a Sanora project", message: "You have been assigned to a project with " + body.access.toLowerCase() + " access.",
+      entityType: "ProjectMember", entityId: membership.id
+    });
+  });
+  return res.status(201).json({ membership, user: memberUser, message: previous ? "Project access updated." : "Staff member added to project." });
 }));
 
 const projectUpdateSchema = z.object({
@@ -1170,6 +1178,17 @@ async function validateTaskAssignee(projectId: string, userId: string) {
   const membership = await prisma.projectMember.findFirst({ where: { projectId, userId, access: { in: ["UPDATE", "MANAGE"] } }, select: { id: true } });
   return membership ? assignee : null;
 }
+
+const projectManagerRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER];
+app.get("/api/staff", authenticate, allow(...projectManagerRoles), asyncRoute(async (_req, res) => {
+  const staff = await prisma.user.findMany({
+    where: { active: true, role: { not: UserRole.CUSTOMER } },
+    select: { id: true, name: true, role: true },
+    orderBy: { name: "asc" }, take: 500
+  });
+  return res.json({ staff });
+}));
+
 app.get("/api/projects/:id/members", authenticate, asyncRoute(async (req, res) => {
   const projectId = routeParam(req, "id");
   if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
@@ -1178,11 +1197,27 @@ app.get("/api/projects/:id/members", authenticate, asyncRoute(async (req, res) =
     prisma.project.findUnique({ where: { id: projectId }, include: { createdBy: { select: { id: true, name: true, role: true, active: true } } } }),
     prisma.projectMember.findMany({ where: { projectId, user: { active: true, role: { not: UserRole.CUSTOMER } } }, include: { user: { select: { id: true, name: true, role: true } } } })
   ]);
-  const staff = new Map<string, { id: string; name: string; role: UserRole }>();
-  if (project?.createdBy.active && project.createdBy.role !== UserRole.CUSTOMER) staff.set(project.createdBy.id, { id: project.createdBy.id, name: project.createdBy.name, role: project.createdBy.role });
-  memberships.forEach(member => staff.set(member.user.id, member.user));
+  const staff = new Map<string, { id: string; name: string; role: UserRole; access: string; isCreator: boolean }>();
+  if (project?.createdBy.active && project.createdBy.role !== UserRole.CUSTOMER) staff.set(project.createdBy.id, { id: project.createdBy.id, name: project.createdBy.name, role: project.createdBy.role, access: "MANAGE", isCreator: true });
+  memberships.forEach(member => staff.set(member.user.id, { ...member.user, access: member.access, isCreator: member.user.id === project?.createdById }));
   return res.json({ members: [...staff.values()] });
 }));
+
+app.delete("/api/projects/:id/members/:userId", authenticate, allow(...projectManagerRoles), asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  const userId = routeParam(req, "userId");
+  if (!(await projectAccess(req.user!, projectId, "MANAGE"))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const project = await prisma.project.findUnique({ where: { id: projectId }, select: { customerId: true, createdById: true } });
+  if (!project || project.createdById === userId || project.customerId === userId) return res.status(400).json({ error: { code: "CORE_PROJECT_MEMBER_PROTECTED", message: "The project creator and customer cannot be removed from the project." } });
+  const membership = await prisma.projectMember.findUnique({ where: { projectId_userId: { projectId, userId } } });
+  if (!membership) return res.status(404).json({ error: { code: "PROJECT_MEMBER_NOT_FOUND", message: "Project team member was not found." } });
+  await prisma.$transaction(async tx => {
+    await tx.projectMember.delete({ where: { id: membership.id } });
+    await audit(tx, req.user!.id, "PROJECT_MEMBER_REMOVED", "ProjectMember", membership.id, { projectId, userId });
+  });
+  return res.json({ message: "Project team member removed." });
+}));
+
 app.get("/api/projects/:id/work-plan", authenticate, asyncRoute(async (req, res) => {
   const projectId = routeParam(req, "id");
   if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });

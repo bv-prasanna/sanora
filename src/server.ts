@@ -340,7 +340,7 @@ app.post("/api/purchase-orders/:id/receipts", authenticate, allow(...staffRoles)
   const poId = routeParam(req, "id");
   const result = await prisma.$transaction(async tx => {
     const po = await tx.purchaseOrder.findUnique({ where: { id: poId }, include: { lines: true } });
-    if (!po || ![PurchaseOrderStatus.APPROVED, PurchaseOrderStatus.PARTIALLY_RECEIVED].includes(po.status)) throw Object.assign(new Error("Material can only be received against an approved purchase order."), { status: 409, code: "PURCHASE_ORDER_NOT_APPROVED" });
+    if (!po || (po.status === PurchaseOrderStatus.APPROVED || po.status === PurchaseOrderStatus.PARTIALLY_RECEIVED)) throw Object.assign(new Error("Material can only be received against an approved purchase order."), { status: 409, code: "PURCHASE_ORDER_NOT_APPROVED" });
     const lineMap = new Map(po.lines.map(line => [line.id, line]));
     for (const received of body.lines) {
       const line = lineMap.get(received.lineId);

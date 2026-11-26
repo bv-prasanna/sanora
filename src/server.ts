@@ -5,7 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { Prisma, PrismaClient, UserRole, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus } from "@prisma/client";
+import { Prisma, PrismaClient, UserRole, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory } from "@prisma/client";
 import { z, ZodError } from "zod";
 import { randomUUID } from "node:crypto";
 import { calculateProjectBalance, type PostedLedgerLine } from "./domain/ledger-balance.js";
@@ -434,6 +434,69 @@ app.post("/api/labour/:id/approve", authenticate, allow(...financeRoles), asyncR
     return approved;
   });
   return res.json({ labourRecord: record, message: "Labour approved and queued as a pending ledger expense. Finance must separately approve and post the expense." });
+}));
+
+const projectMemberSchema = z.object({
+  userId: z.string().uuid(),
+  access: z.enum(["VIEW", "UPDATE", "MANAGE"]).default("UPDATE")
+});
+app.post("/api/projects/:id/members", authenticate, allow(UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER), asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const body = projectMemberSchema.parse(req.body);
+  const memberUser = await prisma.user.findFirst({ where: { id: body.userId, active: true, role: { not: UserRole.CUSTOMER } }, select: { id: true, name: true, role: true } });
+  if (!memberUser) return res.status(404).json({ error: { code: "STAFF_USER_NOT_FOUND", message: "Select an active staff account." } });
+  const membership = await prisma.projectMember.upsert({
+    where: { projectId_userId: { projectId, userId: memberUser.id } },
+    create: { projectId, userId: memberUser.id, access: body.access },
+    update: { access: body.access }
+  });
+  await prisma.auditLog.create({ data: { actorId: req.user!.id, action: "PROJECT_MEMBER_ASSIGNED", entityType: "ProjectMember", entityId: membership.id, metadata: { projectId, userId: memberUser.id, access: body.access } } });
+  return res.status(201).json({ membership, user: memberUser });
+}));
+
+const projectUpdateSchema = z.object({
+  category: z.nativeEnum(ProjectUpdateCategory).default(ProjectUpdateCategory.GENERAL),
+  title: z.string().min(3).max(160),
+  description: z.string().min(3).max(2000),
+  recordedAt: z.string().datetime().optional(),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional()
+}).superRefine((value, ctx) => {
+  if ((value.latitude === undefined) !== (value.longitude === undefined)) {
+    ctx.addIssue({ code: "custom", message: "Latitude and longitude must be supplied together.", path: ["latitude"] });
+  }
+});
+app.get("/api/projects/:id/updates", authenticate, asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const updates = await prisma.projectUpdate.findMany({
+    where: { projectId }, orderBy: { recordedAt: "desc" }, take: 100,
+    include: { createdBy: { select: { id: true, name: true, role: true } } }
+  });
+  return res.json({ updates });
+}));
+app.post("/api/projects/:id/updates", authenticate, allow(UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER, UserRole.SITE_ENGINEER), asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const body = projectUpdateSchema.parse(req.body);
+  const update = await prisma.$transaction(async tx => {
+    const created = await tx.projectUpdate.create({
+      data: {
+        projectId, category: body.category, title: body.title, description: body.description,
+        recordedAt: body.recordedAt ? new Date(body.recordedAt) : new Date(),
+        latitude: body.latitude === undefined ? undefined : money(body.latitude),
+        longitude: body.longitude === undefined ? undefined : money(body.longitude),
+        createdById: req.user!.id
+      },
+      include: { createdBy: { select: { id: true, name: true, role: true } } }
+    });
+    await audit(tx, req.user!.id, "PROJECT_UPDATE_RECORDED", "ProjectUpdate", created.id, {
+      projectId, category: body.category, hasLocation: body.latitude !== undefined
+    });
+    return created;
+  });
+  return res.status(201).json({ update, message: "Site update recorded successfully." });
 }));
 
 app.use((req, res) => res.status(404).json({ error: { code: "ROUTE_NOT_FOUND", message: "The requested service endpoint was not found." } }));

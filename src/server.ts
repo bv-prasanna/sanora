@@ -29,15 +29,25 @@ const routeParam = (req: Request, key: string): string => { const value = req.pa
 const asyncRoute = (fn: (req: AuthedRequest, res: Response) => Promise<unknown>) =>
   (req: Request, res: Response, next: NextFunction) => Promise.resolve(fn(req as AuthedRequest, res)).catch(next);
 
-function authenticate(req: AuthedRequest, res: Response, next: NextFunction) {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
+async function authenticate(req: AuthedRequest, res: Response, next: NextFunction) {
+  const token = req.headers.authorization?.replace(/^Bearer\\s+/i, "");
   if (!token) return res.status(401).json({ error: { code: "AUTH_REQUIRED", message: "Please sign in to continue." } });
+  let claims: jwt.JwtPayload;
   try {
-    req.user = jwt.verify(token, jwtSecret!) as AuthUser;
-    next();
+    const decoded = jwt.verify(token, jwtSecret!);
+    if (typeof decoded === "string" || typeof decoded.id !== "string") throw new Error("Invalid session claims");
+    claims = decoded;
   } catch {
     return res.status(401).json({ error: { code: "SESSION_INVALID", message: "Your session has expired. Please sign in again." } });
   }
+  // Refresh account state and role on every request so deactivation and role changes take effect immediately.
+  const currentUser = await prisma.user.findUnique({
+    where: { id: claims.id },
+    select: { id: true, email: true, role: true, active: true }
+  });
+  if (!currentUser?.active) return res.status(401).json({ error: { code: "ACCOUNT_DISABLED", message: "This account is not active. Please contact Sanora support." } });
+  req.user = { id: currentUser.id, email: currentUser.email, role: currentUser.role };
+  return next();
 }
 const allow = (...roles: UserRole[]) => (req: AuthedRequest, res: Response, next: NextFunction) => {
   if (!req.user || !roles.includes(req.user.role) || !hasSanoraPermission([req.user.role], "edit")) return res.status(403).json({ error: { code: "ACCESS_DENIED", message: "You do not have permission to perform this action." } });
@@ -76,7 +86,7 @@ app.get("/api/projects", authenticate, asyncRoute(async (req, res) => {
   const where = req.user!.role === UserRole.CUSTOMER
     ? { OR: [{ customerId: req.user!.id }, { members: { some: { userId: req.user!.id } } }] }
     : {};
-  const projects = await prisma.project.findMany({ where, orderBy: { updatedAt: "desc" }, include: { estimates: { orderBy: { version: "desc" }, take: 1, include: { lines: true } } } });
+  const projects = await prisma.project.findMany({ where, orderBy: { updatedAt: "desc" }, include: { estimates: { where: req.user!.role === UserRole.CUSTOMER ? { status: { in: [EstimateStatus.SUBMITTED, EstimateStatus.APPROVED, EstimateStatus.SUPERSEDED, EstimateStatus.REJECTED] } } : undefined, orderBy: { version: "desc" }, take: 1, include: { lines: true } } } });
   return res.json({ projects });
 }));
 app.post("/api/projects", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
@@ -105,7 +115,7 @@ app.post("/api/projects/:id/status", authenticate, allow(...staffRoles), asyncRo
 }));
 app.get("/api/projects/:id", authenticate, asyncRoute(async (req, res) => {
   if (!(await projectAccess(req.user!, routeParam(req, "id")))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
-  const project = await prisma.project.findUnique({ where: { id: routeParam(req, "id") }, include: { estimates: { orderBy: { version: "desc" }, include: { lines: true } }, commitments: true } });
+  const project = await prisma.project.findUnique({ where: { id: routeParam(req, "id") }, include: { estimates: { where: req.user!.role === UserRole.CUSTOMER ? { status: { in: [EstimateStatus.SUBMITTED, EstimateStatus.APPROVED, EstimateStatus.SUPERSEDED, EstimateStatus.REJECTED] } } : undefined, orderBy: { version: "desc" }, include: { lines: true } }, commitments: true } });
   if (!project) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   return res.json({ project });
 }));
@@ -139,7 +149,11 @@ app.post("/api/projects/:id/estimates", authenticate, allow(...staffRoles), asyn
 app.post("/api/estimates/:id/submit", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
   const estimate = await prisma.estimate.findUnique({ where: { id: routeParam(req, "id") } });
   if (!estimate || estimate.status !== EstimateStatus.DRAFT) return res.status(409).json({ error: { code: "ESTIMATE_NOT_DRAFT", message: "Only a draft estimate can be submitted." } });
-  const updated = await prisma.estimate.update({ where: { id: estimate.id }, data: { status: EstimateStatus.SUBMITTED } });
+  const updated = await prisma.$transaction(async tx => {
+    const submitted = await tx.estimate.update({ where: { id: estimate.id }, data: { status: EstimateStatus.SUBMITTED } });
+    await audit(tx, req.user!.id, "ESTIMATE_SUBMITTED", "Estimate", submitted.id, { projectId: submitted.projectId, version: submitted.version });
+    return submitted;
+  });
   return res.json({ estimate: updated });
 }));
 app.post("/api/estimates/:id/approve", authenticate, allow(...financeRoles), asyncRoute(async (req, res) => {
@@ -169,6 +183,9 @@ const ledgerSchema = z.object({
 app.post("/api/projects/:id/ledger", authenticate, asyncRoute(async (req, res) => {
   const body = ledgerSchema.parse(req.body);
   const projectId = routeParam(req, "id");
+  if (req.user!.role === UserRole.CUSTOMER && body.type === "TOP_UP" && !body.reference && !body.evidenceUrl) {
+    return res.status(400).json({ error: { code: "TOP_UP_EVIDENCE_REQUIRED", message: "Please provide a payment reference or receipt evidence. The top-up remains pending until finance verifies it." } });
+  }
   if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   if (req.user!.role === UserRole.CUSTOMER && body.type !== "TOP_UP") return res.status(403).json({ error: { code: "CUSTOMER_LEDGER_RESTRICTED", message: "Customers can submit top-up receipts. Expense entries are recorded by authorised project staff." } });
   if (body.type === "TOP_UP" && !([...financeRoles, UserRole.CUSTOMER] as UserRole[]).includes(req.user!.role)) return res.status(403).json({ error: { code: "TOP_UP_ROLE_REQUIRED", message: "Only customers or finance staff can record a top-up receipt." } });

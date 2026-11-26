@@ -95,6 +95,16 @@
           <div class="hero-meta"><div><small>PROJECT CODE</small><b id="heroProjectCode">—</b></div><div><small>APPROVED ESTIMATE</small><b id="approvedEstimate">Not yet approved</b></div><div><small>LAST UPDATED</small><b id="lastUpdated">—</b></div></div>
         </div>
       </section>
+      <section class="panel project-team-panel" id="projectTeamPanel" hidden>
+        <div class="panel-head"><div><span class="eyebrow">ACCESS MANAGEMENT</span><h3>Project team</h3></div><span class="live-label">ROLE SCOPED</span></div>
+        <form id="projectMemberForm" class="project-member-form">
+          <div><label for="projectStaffSelect">Assign staff member</label><select id="projectStaffSelect" name="userId" required><option value="">Select staff member</option></select></div>
+          <div><label for="projectMemberAccess">Access level</label><select id="projectMemberAccess" name="access"><option value="VIEW">View</option><option value="UPDATE" selected>Update</option><option value="MANAGE">Manage</option></select></div>
+          <button type="submit">Add to project</button>
+        </form>
+        <p id="projectMemberMessage" class="form-message" role="status"></p>
+        <div id="projectTeamList" class="project-team-list empty-state">Loading project team…</div>
+      </section>
       <section class="panel estimate-history-panel" id="estimateHistory">
         <div class="panel-head"><div><span class="eyebrow">ESTIMATE REGISTER</span><h3>Plan-based estimates</h3></div><span class="live-label">VERSIONED</span></div><p class="panel-note">Customer acknowledgement records agreement with the indicative BOQ/scope for discussion. It is not a fixed-price contract or a guarantee of final cost; actual material and labour charges remain based on verified project costs.</p>
         <div id="estimateList" class="estimate-list empty-state">Loading estimates…</div>

@@ -5,7 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { Prisma, PrismaClient, UserRole, ProjectStatus, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory, ProjectDocumentCategory, ProjectDocumentStatus, TopUpRequestStatus, ProjectMilestoneStatus, ProjectTaskStatus, ProjectTaskPriority } from "@prisma/client";
+import { Prisma, PrismaClient, UserRole, ProjectStatus, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory, ProjectDocumentCategory, ProjectDocumentStatus, TopUpRequestStatus, ProjectMilestoneStatus, ProjectTaskStatus, ProjectTaskPriority, NotificationType } from "@prisma/client";
 import { z, ZodError } from "zod";
 import { randomUUID } from "node:crypto";
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
@@ -113,6 +113,12 @@ const safeFileName = (name: string) => name.replace(/[\/\\\u0000-\u001f\u007f]/g
 const money = (v: Prisma.Decimal | number | string) => new Prisma.Decimal(v);
 const audit = (tx: Prisma.TransactionClient, actorId: string, action: string, entityType: string, entityId: string, metadata?: Prisma.InputJsonValue) =>
   tx.auditLog.create({ data: { actorId, action, entityType, entityId, metadata } });
+
+const notify = (tx: Prisma.TransactionClient, data: {
+  recipientId: string; actorId?: string; projectId?: string; type: NotificationType;
+  title: string; message: string; entityType?: string; entityId?: string;
+}) => tx.notification.create({ data });
+
 
 app.get("/health", (_req, res) => res.json({ status: "ok", service: "sanora-api", timestamp: new Date().toISOString() }));
 
@@ -715,6 +721,30 @@ app.post("/api/project-updates/:id/customer-visibility", authenticate, allow(Use
     return result;
   });
   return res.json({ update: { id: saved.id, customerVisible: saved.customerVisible }, message: body.customerVisible ? "Site update published to the customer portal." : "Site update is now internal only." });
+}));
+
+
+app.get("/api/notifications", authenticate, asyncRoute(async (req, res) => {
+  const [notifications, unreadCount] = await Promise.all([
+    prisma.notification.findMany({
+      where: { recipientId: req.user!.id }, orderBy: { createdAt: "desc" }, take: 50,
+      include: { project: { select: { id: true, code: true, name: true } } }
+    }),
+    prisma.notification.count({ where: { recipientId: req.user!.id, readAt: null } })
+  ]);
+  return res.json({ notifications, unreadCount });
+}));
+app.post("/api/notifications/:id/read", authenticate, asyncRoute(async (req, res) => {
+  const result = await prisma.notification.updateMany({
+    where: { id: routeParam(req, "id"), recipientId: req.user!.id, readAt: null },
+    data: { readAt: new Date() }
+  });
+  if (!result.count) return res.status(404).json({ error: { code: "NOTIFICATION_NOT_FOUND", message: "Notification was not found or is already read." } });
+  return res.json({ message: "Notification marked as read." });
+}));
+app.post("/api/notifications/read-all", authenticate, asyncRoute(async (req, res) => {
+  const result = await prisma.notification.updateMany({ where: { recipientId: req.user!.id, readAt: null }, data: { readAt: new Date() } });
+  return res.json({ updated: result.count, message: "All notifications marked as read." });
 }));
 
 app.get("/api/operations/summary", authenticate, asyncRoute(async (req, res) => {

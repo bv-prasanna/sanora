@@ -150,7 +150,7 @@
       const line = window.document.createElement("div"); line.className = "document-row";
       const info = window.document.createElement("div");
       const name = window.document.createElement("b"); name.textContent = document.originalName;
-      const meta = window.document.createElement("small"); meta.textContent = titleCase(document.category) + " · " + date(document.availableAt || document.createdAt) + " · " + Math.max(1, Math.round(document.sizeBytes / 1024)) + " KB" + (document.uploadedBy?.name ? " · " + document.uploadedBy.name : "") + (currentUser?.role === "CUSTOMER" ? "" : document.customerVisible ? " · Customer visible" : " · Internal");
+      const meta = window.document.createElement("small"); meta.textContent = titleCase(document.category) + " · " + date(document.availableAt || document.createdAt) + " · " + Math.max(1, Math.round(document.sizeBytes / 1024)) + " KB" + (document.uploadedBy?.name ? " · " + document.uploadedBy.name : "") + (document.description ? " · " + document.description : "") + (currentUser?.role === "CUSTOMER" ? "" : document.customerVisible ? " · Customer visible" : " · Internal");
       info.append(name, meta);
       const link = window.document.createElement("button"); link.type = "button"; link.textContent = "Download";
       link.addEventListener("click", async () => {

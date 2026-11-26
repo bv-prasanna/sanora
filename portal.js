@@ -66,7 +66,7 @@
       const link = window.document.createElement("button"); link.type = "button"; link.textContent = "Download";
       link.addEventListener("click", async () => {
         link.disabled = true; link.textContent = "Preparing…";
-        try { const signed = await api("/documents/" + encodeURIComponent(document.id) + "/download-url", { method: "POST", body: "{}" }); window.open(signed.downloadUrl, "_blank", "noopener"); }
+        try { const signed = await api("/documents/" + encodeURIComponent(document.id) + "/download-url", { method: "POST", body: "{}" }); window.location.assign(signed.downloadUrl); }
         catch (error) { message("#dashboardMessage", error.message, "error"); }
         finally { link.disabled = false; link.textContent = "Download"; }
       });

@@ -285,7 +285,8 @@
     event.preventDefault();
     const button = $("#loginButton"); button.disabled = true; button.textContent = "Signing in…";
     message("#loginMessage", "");
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     try {
       const result = await api("/auth/login", { method: "POST", body: JSON.stringify({ email: form.get("email"), password: form.get("password") }) });
       token = result.token; sessionStorage.setItem(tokenKey, token); currentUser = result.user;
@@ -311,7 +312,7 @@
           customerVisible: $("#milestoneVisibility").checked
         })
       });
-      message("#planningMessage", result.message, "info"); event.currentTarget.reset(); await loadProject(activeProjectId);
+      message("#planningMessage", result.message, "info"); formElement.reset(); await loadProject(activeProjectId);
     } catch (error) { message("#planningMessage", error.message, "error"); }
   });
   $("#taskForm").addEventListener("submit", async event => {

@@ -99,9 +99,11 @@ app.get("/api/auth/me", authenticate, asyncRoute(async (req, res) => {
 }));
 
 app.get("/api/projects", authenticate, asyncRoute(async (req, res) => {
-  const where = req.user!.role === UserRole.CUSTOMER
-    ? { OR: [{ customerId: req.user!.id }, { members: { some: { userId: req.user!.id } } }] }
-    : {};
+  const where: Prisma.ProjectWhereInput = projectWideViewRoles.includes(req.user!.role)
+    ? {}
+    : req.user!.role === UserRole.CUSTOMER
+      ? { OR: [{ customerId: req.user!.id }, { members: { some: { userId: req.user!.id } } }] }
+      : { OR: [{ createdById: req.user!.id }, { members: { some: { userId: req.user!.id } } }] };
   const projects = await prisma.project.findMany({ where, orderBy: { updatedAt: "desc" }, include: { estimates: { where: req.user!.role === UserRole.CUSTOMER ? { status: { in: [EstimateStatus.SUBMITTED, EstimateStatus.APPROVED, EstimateStatus.SUPERSEDED, EstimateStatus.REJECTED] } } : undefined, orderBy: { version: "desc" }, take: 1, include: { lines: true } } } });
   return res.json({ projects });
 }));

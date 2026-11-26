@@ -637,6 +637,41 @@ app.post("/api/project-updates/:id/customer-visibility", authenticate, allow(Use
   });
   return res.json({ update: { id: saved.id, customerVisible: saved.customerVisible }, message: body.customerVisible ? "Site update published to the customer portal." : "Site update is now internal only." });
 }));
+
+app.get("/api/operations/summary", authenticate, asyncRoute(async (req, res) => {
+  const dashboardRoles = [...staffRoles, UserRole.AUDITOR];
+  if (!dashboardRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "OPERATIONS_DASHBOARD_RESTRICTED", message: "The operations overview is available to authorised staff accounts." } });
+  const projectWhere: Prisma.ProjectWhereInput = projectWideViewRoles.includes(req.user!.role)
+    ? {}
+    : { OR: [{ createdById: req.user!.id }, { members: { some: { userId: req.user!.id } } }] };
+  const projects = await prisma.project.findMany({
+    where: projectWhere, orderBy: { updatedAt: "desc" },
+    select: { id: true, code: true, name: true, status: true, location: true, updatedAt: true }
+  });
+  const projectIds = projects.map(project => project.id);
+  if (!projectIds.length) return res.json({
+    summary: { totalProjects: 0, activeProjects: 0, pendingTopUps: 0, pendingExpenseReviews: 0, purchaseOrdersAwaitingApproval: 0, labourRecordsAwaitingApproval: 0, blockedTasks: 0, overdueTasks: 0 },
+    recentProjects: []
+  });
+  const now = new Date();
+  const [pendingTopUps, pendingExpenseReviews, purchaseOrdersAwaitingApproval, labourRecordsAwaitingApproval, blockedTasks, overdueTasks] = await Promise.all([
+    prisma.topUpRequest.count({ where: { projectId: { in: projectIds }, status: TopUpRequestStatus.SUBMITTED } }),
+    prisma.ledgerEntry.count({ where: { projectId: { in: projectIds }, status: { in: [LedgerStatus.PENDING, LedgerStatus.APPROVED] }, type: { in: [LedgerType.MATERIAL_EXPENSE, LedgerType.LABOUR_EXPENSE, LedgerType.OTHER_EXPENSE, LedgerType.REFUND] } } }),
+    prisma.purchaseOrder.count({ where: { projectId: { in: projectIds }, status: PurchaseOrderStatus.SUBMITTED } }),
+    prisma.labourRecord.count({ where: { projectId: { in: projectIds }, status: LabourRecordStatus.SUBMITTED } }),
+    prisma.projectTask.count({ where: { projectId: { in: projectIds }, status: ProjectTaskStatus.BLOCKED } }),
+    prisma.projectTask.count({ where: { projectId: { in: projectIds }, dueDate: { lt: now }, status: { in: [ProjectTaskStatus.TODO, ProjectTaskStatus.IN_PROGRESS, ProjectTaskStatus.BLOCKED, ProjectTaskStatus.IN_REVIEW] } } })
+  ]);
+  const activeProjects = projects.filter(project => ![ProjectStatus.COMPLETED, ProjectStatus.CANCELLED].includes(project.status)).length;
+  return res.json({
+    summary: {
+      totalProjects: projects.length, activeProjects, pendingTopUps, pendingExpenseReviews,
+      purchaseOrdersAwaitingApproval, labourRecordsAwaitingApproval, blockedTasks, overdueTasks
+    },
+    recentProjects: projects.slice(0, 6)
+  });
+}));
+
 app.use((req, res) => res.status(404).json({ error: { code: "ROUTE_NOT_FOUND", message: "The requested service endpoint was not found." } }));
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof ZodError) return res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Please check the submitted information.", details: err.issues.map(i => ({ field: i.path.join("."), message: i.message })) } });

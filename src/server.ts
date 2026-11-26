@@ -8,6 +8,7 @@ import jwt from "jsonwebtoken";
 import { Prisma, PrismaClient, UserRole, LedgerType, LedgerStatus, EstimateStatus } from "@prisma/client";
 import { z, ZodError } from "zod";
 import { randomUUID } from "node:crypto";
+import { calculateProjectBalance } from "./domain/ledger-balance";
 
 const prisma = new PrismaClient();
 const app = express();
@@ -209,13 +210,8 @@ app.get("/api/projects/:id/ledger", authenticate, asyncRoute(async (req, res) =>
     prisma.ledgerEntry.findMany({ where: { projectId, status: LedgerStatus.POSTED }, orderBy: { postedAt: "desc" } }),
     prisma.commitment.findMany({ where: { projectId, status: { in: ["OPEN", "PARTIALLY_FULFILLED"] } } })
   ]);
-  const sum = (types: LedgerType[]) => entries.filter(e => types.includes(e.type)).reduce((v, e) => v.plus(e.amount), money(0));
-  const fundsReceived = sum([LedgerType.TOP_UP]);
-  const expenses = sum([LedgerType.MATERIAL_EXPENSE, LedgerType.LABOUR_EXPENSE, LedgerType.OTHER_EXPENSE]);
-  const refunds = sum([LedgerType.REFUND]);
-  const pendingCommitments = commitments.reduce((v, c) => v.plus(c.amount.minus(c.fulfilledAmount)), money(0));
-  const available = fundsReceived.minus(expenses).minus(refunds);
-  return res.json({ entries, summary: { currency: "INR", fundsReceived: fundsReceived.toFixed(2), actualExpenses: expenses.toFixed(2), refunds: refunds.toFixed(2), availableFunds: available.toFixed(2), pendingCommitments: pendingCommitments.toFixed(2), projectedAfterCommitments: available.minus(pendingCommitments).toFixed(2) }, note: "Only posted ledger entries affect actual balances. Pending commitments are shown separately and are not double-deducted from actual expenses." });
+  const summary = calculateProjectBalance(entries.map(e => ({ type: e.type, amount: e.amount })), commitments);
+  return res.json({ entries, summary: { currency: "INR", ...summary }, note: "Only posted ledger entries affect actual balances. Pending commitments are shown separately and are not double-deducted from actual expenses." });
 }));
 app.post("/api/projects/:id/commitments", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
   const body = z.object({ description: z.string().min(3).max(300), vendor: z.string().max(180).optional(), amount: z.number().positive(), reference: z.string().max(120).optional() }).parse(req.body);

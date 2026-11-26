@@ -50,3 +50,18 @@ const projectWorkflow = createWorkflow({
 export function validateProjectTransition(current, next, actorId, allowed) {
   return transition(projectWorkflow, current, next, { actorId, reason: "Project status update", allowed });
 }
+
+const taskWorkflow = createWorkflow({
+  initial: "TODO",
+  transitions: {
+    TODO: ["IN_PROGRESS", "BLOCKED", "CANCELLED"],
+    IN_PROGRESS: ["BLOCKED", "IN_REVIEW", "COMPLETED", "TODO"],
+    BLOCKED: ["IN_PROGRESS", "CANCELLED"],
+    IN_REVIEW: ["IN_PROGRESS", "BLOCKED", "COMPLETED"],
+    COMPLETED: ["IN_PROGRESS"],
+    CANCELLED: []
+  }
+});
+export function validateTaskTransition(current, next, actorId, allowed) {
+  return transition(taskWorkflow, current, next, { actorId, reason: "Project task status update", allowed });
+}

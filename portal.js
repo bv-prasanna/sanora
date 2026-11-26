@@ -145,7 +145,7 @@
     const container = $("#projectDocuments");
     const result = await api("/projects/" + encodeURIComponent(projectId) + "/documents");
     container.replaceChildren();
-    if (!result.documents?.length) return empty(container, "No customer-shareable project documents have been published yet.");
+    if (!result.documents?.length) return empty(container, currentUser?.role === "CUSTOMER" ? "No customer-shareable project documents have been published yet." : "No documents have been uploaded for this project yet.");
     result.documents.forEach(document => {
       const line = window.document.createElement("div"); line.className = "document-row";
       const info = window.document.createElement("div");
@@ -546,6 +546,7 @@
     $("#siteUpdateForm").hidden = !planningRole;
     const documentUploadRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "PROCUREMENT", "SITE_ENGINEER", "FINANCE"].includes(currentUser?.role);
     $("#documentUploadForm").hidden = !documentUploadRole;
+    $("#documentVisibilityLabel").hidden = !managerRole;
     $("#siteUpdateVisibilityLabel").hidden = !managerRole;
     $("#milestoneVisibilityLabel").hidden = !managerRole;
     $("#taskVisibilityLabel").hidden = !managerRole;
@@ -633,7 +634,7 @@
     const file = $("#documentFile").files?.[0];
     if (!file) return message("#documentUploadMessage", "Choose a file to upload.", "error");
     if (file.size < 1 || file.size > 15 * 1024 * 1024) return message("#documentUploadMessage", "File size must be between 1 byte and 15 MiB.", "error");
-    const allowedTypes = ["application/pdf", "image/jpeg", "image/png", "image/webp", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"];
+    const allowedTypes = ["application/pdf", "image/jpeg", "image/png", "image/webp", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"];
     if (!allowedTypes.includes(file.type)) return message("#documentUploadMessage", "This file type is not supported.", "error");
     const button = $("#documentUploadButton"); button.disabled = true; button.textContent = "Uploading…";
     try {

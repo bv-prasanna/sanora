@@ -8,7 +8,8 @@ import jwt from "jsonwebtoken";
 import { Prisma, PrismaClient, UserRole, LedgerType, LedgerStatus, EstimateStatus } from "@prisma/client";
 import { z, ZodError } from "zod";
 import { randomUUID } from "node:crypto";
-import { calculateProjectBalance } from "./domain/ledger-balance";
+import { calculateProjectBalance } from "./domain/ledger-balance.js";
+import { hasSanoraPermission, redactAuditMetadata, estimateProjectTotal, validateProjectTransition } from "./skeleton/policies.mjs";
 
 const prisma = new PrismaClient();
 const app = express();
@@ -38,7 +39,7 @@ function authenticate(req: AuthedRequest, res: Response, next: NextFunction) {
   }
 }
 const allow = (...roles: UserRole[]) => (req: AuthedRequest, res: Response, next: NextFunction) => {
-  if (!req.user || !roles.includes(req.user.role)) return res.status(403).json({ error: { code: "ACCESS_DENIED", message: "You do not have permission to perform this action." } });
+  if (!req.user || !roles.includes(req.user.role) || !hasSanoraPermission([req.user.role], "edit")) return res.status(403).json({ error: { code: "ACCESS_DENIED", message: "You do not have permission to perform this action." } });
   next();
 };
 const staffRoles = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.SITE_ENGINEER, UserRole.PROCUREMENT, UserRole.FINANCE];
@@ -88,7 +89,20 @@ app.post("/api/projects", authenticate, allow(...staffRoles), asyncRoute(async (
   });
   return res.status(201).json({ project });
 }));
-app.get("/api/projects/:id", authenticate, asyncRoute(async (req, res) => {
+
+app.post("/api/projects/:id/status", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
+  const body = z.object({ status: z.enum(["ENQUIRY","ESTIMATION","AWAITING_APPROVAL","PLANNING","IN_PROGRESS","ON_HOLD","HANDOVER","COMPLETED","CANCELLED"]) }).parse(req.body);
+  const project = await prisma.project.findUnique({ where: { id: req.params.id } });
+  if (!project) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  validateProjectTransition(project.status, body.status, req.user!.id, true);
+  const updated = await prisma.$transaction(async tx => {
+    const p = await tx.project.update({ where: { id: project.id }, data: { status: body.status } });
+    await audit(tx, req.user!.id, "PROJECT_STATUS_CHANGED", "Project", p.id, { from: project.status, to: body.status });
+    return p;
+  });
+  return res.json({ project: updated });
+}));
+\napp.get("/api/projects/:id", authenticate, asyncRoute(async (req, res) => {
   if (!(await projectAccess(req.user!, req.params.id))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   const project = await prisma.project.findUnique({ where: { id: req.params.id }, include: { estimates: { orderBy: { version: "desc" }, include: { lines: true } }, commitments: true } });
   if (!project) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
@@ -118,8 +132,8 @@ app.post("/api/projects/:id/estimates", authenticate, allow(...staffRoles), asyn
     await audit(tx, req.user!.id, "ESTIMATE_CREATED", "Estimate", created.id, { projectId: project.id, version: created.version });
     return created;
   });
-  const total = estimate.lines.reduce((sum, line) => sum.plus(line.quantity.mul(line.unitRate)), money(0));
-  return res.status(201).json({ estimate, indicativeTotal: total.toFixed(2), currency: "INR", disclaimer: "Indicative estimate only; actual material and labour costs may vary with approved scope, quantities, specifications, site conditions and prevailing rates." });
+  const total = estimateProjectTotal(estimate.lines.map(line => ({ quantity: line.quantity.toString(), unitRate: line.unitRate.toString() })));
+  return res.status(201).json({ estimate, indicativeTotal: total.totalRupees, currency: total.currency, disclaimer: "Indicative estimate only; actual material and labour costs may vary with approved scope, quantities, specifications, site conditions and prevailing rates." });
 }));
 app.post("/api/estimates/:id/submit", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
   const estimate = await prisma.estimate.findUnique({ where: { id: req.params.id } });

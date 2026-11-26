@@ -53,6 +53,10 @@ const allow = (...roles: UserRole[]) => (req: AuthedRequest, res: Response, next
   if (!req.user || !roles.includes(req.user.role) || !hasSanoraPermission([req.user.role], "edit")) return res.status(403).json({ error: { code: "ACCESS_DENIED", message: "You do not have permission to perform this action." } });
   next();
 };
+const allowView = (...roles: UserRole[]) => (req: AuthedRequest, res: Response, next: NextFunction) => {
+  if (!req.user || !roles.includes(req.user.role) || !hasSanoraPermission([req.user.role], "view")) return res.status(403).json({ error: { code: "ACCESS_DENIED", message: "You do not have permission to view this information." } });
+  next();
+};
 const staffRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER, UserRole.SALES, UserRole.SITE_ENGINEER, UserRole.PROCUREMENT, UserRole.FINANCE];
 const expenseRoles: UserRole[] = staffRoles.filter(role => role !== UserRole.SALES);
 const financeRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.FINANCE];
@@ -261,7 +265,7 @@ const vendorSchema = z.object({
   gstin: z.string().max(20).optional(),
   address: z.string().max(500).optional()
 });
-app.get("/api/vendors", authenticate, allow(...[...staffRoles, UserRole.AUDITOR]), asyncRoute(async (_req, res) => {
+app.get("/api/vendors", authenticate, allowView(...[...staffRoles, UserRole.AUDITOR]), asyncRoute(async (_req, res) => {
   const vendors = await prisma.vendor.findMany({ where: { active: true }, orderBy: { name: "asc" } });
   return res.json({ vendors });
 }));
@@ -325,7 +329,7 @@ app.post("/api/purchase-orders/:id/approve", authenticate, allow(...financeRoles
   });
   return res.json({ purchaseOrder: updated, message: "Purchase order approved. Material receipts can now be recorded." });
 }));
-app.post("/api/purchase-orders/:id/receipts", authenticate, allow(...[...staffRoles, UserRole.AUDITOR]), asyncRoute(async (req, res) => {
+app.post("/api/purchase-orders/:id/receipts", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
   const body = z.object({
     receiptNumber: z.string().min(2).max(100),
     receivedAt: z.string().datetime().optional(),
@@ -364,7 +368,7 @@ app.get("/api/projects/:id/labour", authenticate, asyncRoute(async (req, res) =>
   const records = await prisma.labourRecord.findMany({ where: { projectId }, orderBy: { workDate: "desc" } });
   return res.json({ labourRecords: records });
 }));
-app.post("/api/projects/:id/labour", authenticate, allow(...[...staffRoles, UserRole.AUDITOR]), asyncRoute(async (req, res) => {
+app.post("/api/projects/:id/labour", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
   const body = z.object({
     workerName: z.string().min(2).max(160),
     workDate: z.string().datetime(),

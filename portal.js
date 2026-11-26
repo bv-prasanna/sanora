@@ -54,15 +54,52 @@
     records.slice(0, 6).forEach(item => row(container, "◷", item.workerName, titleCase(item.workType) + " · " + date(item.workDate) + " · " + titleCase(item.status), money(item.amount), false));
   }
   async function renderTopUps(projectId) {
-    const container = $("#topUpHistory");
     const result = await api("/projects/" + encodeURIComponent(projectId) + "/top-ups");
-    container.replaceChildren();
-    if (!result.topUps?.length) return empty(container, "No top-up requests have been submitted yet.");
+    const customerContainer = $("#topUpHistory");
+    customerContainer.replaceChildren();
+    const financeContainer = $("#financeTopUpHistory");
+    financeContainer.replaceChildren();
+    if (!result.topUps?.length) {
+      empty(customerContainer, "No top-up requests have been submitted yet.");
+      empty(financeContainer, "No top-up requests are awaiting or have completed reconciliation.");
+      return;
+    }
+    const finance = ["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role);
     result.topUps.forEach(request => {
       const status = titleCase(request.status);
       const detail = [titleCase(request.paymentMode), request.reference, date(request.submittedAt), request.reviewReason].filter(Boolean).join(" · ");
-      row(container, request.status === "CONFIRMED" ? "✓" : request.status === "REJECTED" ? "!" : "↻", status, detail, money(request.amount), request.status === "CONFIRMED");
+      if (currentUser?.role === "CUSTOMER") {
+        row(customerContainer, request.status === "CONFIRMED" ? "✓" : request.status === "REJECTED" ? "!" : "↻", status, detail, money(request.amount), request.status === "CONFIRMED");
+      }
+      if (finance) {
+        row(financeContainer, request.status === "CONFIRMED" ? "✓" : request.status === "REJECTED" ? "!" : "↻", status, (request.requestedBy?.name || "Customer") + " · " + detail, money(request.amount), request.status === "CONFIRMED");
+        if (request.status === "SUBMITTED") {
+          const line = financeContainer.lastElementChild;
+          const actions = window.document.createElement("div"); actions.className = "topup-actions";
+          const confirmButton = window.document.createElement("button"); confirmButton.type = "button"; confirmButton.textContent = "Confirm receipt";
+          const rejectButton = window.document.createElement("button"); rejectButton.type = "button"; rejectButton.textContent = "Reject";
+          confirmButton.addEventListener("click", async () => {
+            confirmButton.disabled = true;
+            try {
+              const response = await api("/top-ups/" + encodeURIComponent(request.id) + "/reconcile", { method: "POST", body: JSON.stringify({ decision: "CONFIRM" }) });
+              message("#dashboardMessage", response.message, "info"); await renderTopUps(projectId); await loadProject(projectId);
+            } catch (error) { message("#dashboardMessage", error.message, "error"); confirmButton.disabled = false; }
+          });
+          rejectButton.addEventListener("click", async () => {
+            const reason = window.prompt("Enter the reason for rejecting this top-up:");
+            if (!reason || reason.trim().length < 3) return;
+            rejectButton.disabled = true;
+            try {
+              const response = await api("/top-ups/" + encodeURIComponent(request.id) + "/reconcile", { method: "POST", body: JSON.stringify({ decision: "REJECT", reason: reason.trim() }) });
+              message("#dashboardMessage", response.message, "info"); await renderTopUps(projectId);
+            } catch (error) { message("#dashboardMessage", error.message, "error"); rejectButton.disabled = false; }
+          });
+          actions.append(confirmButton, rejectButton); line.append(actions);
+        }
+      }
     });
+    if (currentUser?.role !== "CUSTOMER") empty(customerContainer, "Top-up submissions are available from the customer account.");
+    if (!finance) empty(financeContainer, "Finance reconciliation is available to authorised Finance users.");
   }
   async function renderDocuments(projectId) {
     const container = $("#projectDocuments");
@@ -169,6 +206,7 @@
     setText("#userEmail", currentUser?.email || "");
     setText("#userInitials", initials(currentUser?.name));
     $("#topUpPanel").hidden = currentUser?.role !== "CUSTOMER";
+    $("#financeTopUpPanel").hidden = !["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role);
     try { await loadProjects(); }
     catch (error) { message("#dashboardMessage", error.message, "error"); }
   }

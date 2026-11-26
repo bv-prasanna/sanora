@@ -323,6 +323,41 @@
     populatePlanningForms(members.members || [], workPlan.milestones || []);
     renderProject(projectResult.project, ledger, orders, labour, updates, workPlan, financeQueue, statementResult.statement);
   }
+  async function updateLead(id, changes) {
+    try {
+      const result = await api("/leads/" + encodeURIComponent(id), { method: "PATCH", body: JSON.stringify(changes) });
+      message("#opsMessage", result.message || "Enquiry updated.", "info");
+      await loadLeads(); await loadOperationsSummary();
+    } catch (error) { message("#opsMessage", error.message, "error"); }
+  }
+  async function loadLeads() {
+    const result = await api("/leads");
+    const container = $("#leadList"); container.replaceChildren();
+    if (!result.leads?.length) return empty(container, "No website enquiries are waiting in your pipeline.");
+    const statuses = ["NEW", "CONTACTED", "QUALIFIED", "SITE_VISIT", "PROPOSAL", "CONVERTED", "LOST"];
+    result.leads.forEach(lead => {
+      const card = window.document.createElement("article"); card.className = "lead-card";
+      const header = window.document.createElement("div"); header.className = "lead-card-head";
+      const title = window.document.createElement("b"); title.textContent = lead.name;
+      const status = window.document.createElement("select"); status.className = "lead-status";
+      statuses.forEach(value => { const option = window.document.createElement("option"); option.value = value; option.textContent = titleCase(value); status.append(option); });
+      status.value = lead.status;
+      status.addEventListener("change", () => updateLead(lead.id, { status: status.value }));
+      header.append(title, status);
+      const contact = window.document.createElement("div"); contact.className = "lead-contact";
+      const phone = window.document.createElement("a"); phone.href = "tel:" + lead.phone; phone.textContent = lead.phone; contact.append(phone);
+      if (lead.email) { const email = window.document.createElement("a"); email.href = "mailto:" + lead.email; email.textContent = lead.email; contact.append(email); }
+      const interest = window.document.createElement("small"); interest.textContent = lead.interest + " · " + date(lead.createdAt) + (lead.assignedTo?.name ? " · Assigned to " + lead.assignedTo.name : " · Unassigned");
+      const messageNode = window.document.createElement("p"); messageNode.textContent = lead.message || "No additional project details supplied.";
+      card.append(header, contact, interest, messageNode);
+      if (!lead.assignedToId) {
+        const assign = window.document.createElement("button"); assign.type = "button"; assign.className = "task-action"; assign.textContent = "Assign to me";
+        assign.addEventListener("click", () => updateLead(lead.id, { assignedToId: currentUser.id }));
+        card.append(assign);
+      }
+      container.append(card);
+    });
+  }
   async function loadNotifications() {
     const result = await api("/notifications");
     const count = Number(result.unreadCount || 0);
@@ -359,7 +394,8 @@
       ["Labour approvals", result.summary.labourRecordsAwaitingApproval],
       ["Blocked tasks", result.summary.blockedTasks],
       ["Overdue tasks", result.summary.overdueTasks],
-      ["Total projects", result.summary.totalProjects]
+      ["Total projects", result.summary.totalProjects],
+      ["New enquiries", result.summary.newLeads]
     ];
     const container = $("#opsMetrics"); container.replaceChildren();
     metrics.forEach(([label, value]) => {
@@ -406,6 +442,9 @@
     try {
       await loadProjects();
       if (currentUser?.role !== "CUSTOMER") await loadOperationsSummary();
+      const leadRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SALES"].includes(currentUser?.role);
+      $("#leadInbox").hidden = !leadRole;
+      if (leadRole) await loadLeads();
       await loadNotifications();
     } catch (error) { message("#dashboardMessage", error.message, "error"); }
   }

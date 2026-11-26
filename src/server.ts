@@ -5,7 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { Prisma, PrismaClient, UserRole, LedgerType, LedgerStatus, EstimateStatus } from "@prisma/client";
+import { Prisma, PrismaClient, UserRole, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus } from "@prisma/client";
 import { z, ZodError } from "zod";
 import { randomUUID } from "node:crypto";
 import { calculateProjectBalance, type PostedLedgerLine } from "./domain/ledger-balance.js";
@@ -250,6 +250,161 @@ app.post("/api/projects/:id/commitments", authenticate, allow(...staffRoles), as
   const body = z.object({ description: z.string().min(3).max(300), vendor: z.string().max(180).optional(), amount: z.number().positive(), reference: z.string().max(120).optional() }).parse(req.body);
   const commitment = await prisma.commitment.create({ data: { projectId: routeParam(req, "id"), ...body, amount: money(body.amount) } });
   return res.status(201).json({ commitment });
+}));
+
+
+const vendorSchema = z.object({
+  name: z.string().min(2).max(180),
+  contactName: z.string().max(120).optional(),
+  phone: z.string().max(30).optional(),
+  email: z.string().email().optional(),
+  gstin: z.string().max(20).optional(),
+  address: z.string().max(500).optional()
+});
+app.get("/api/vendors", authenticate, allow(...[...staffRoles, UserRole.AUDITOR]), asyncRoute(async (_req, res) => {
+  const vendors = await prisma.vendor.findMany({ where: { active: true }, orderBy: { name: "asc" } });
+  return res.json({ vendors });
+}));
+app.post("/api/vendors", authenticate, allow(UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER, UserRole.PROCUREMENT), asyncRoute(async (req, res) => {
+  const body = vendorSchema.parse(req.body);
+  const vendor = await prisma.vendor.create({ data: body });
+  await prisma.auditLog.create({ data: { actorId: req.user!.id, action: "VENDOR_CREATED", entityType: "Vendor", entityId: vendor.id, metadata: { name: vendor.name } } });
+  return res.status(201).json({ vendor });
+}));
+
+const purchaseOrderLineSchema = z.object({
+  description: z.string().min(2).max(240),
+  specification: z.string().max(500).optional(),
+  quantity: z.number().positive().max(1_000_000),
+  unit: z.string().min(1).max(24),
+  unitRate: z.number().nonnegative().max(1_000_000_000)
+});
+app.get("/api/projects/:id/purchase-orders", authenticate, asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const purchaseOrders = await prisma.purchaseOrder.findMany({ where: { projectId }, include: { vendor: true, lines: true, receipts: true }, orderBy: { createdAt: "desc" } });
+  return res.json({ purchaseOrders });
+}));
+app.post("/api/projects/:id/purchase-orders", authenticate, allow(UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER, UserRole.PROCUREMENT), asyncRoute(async (req, res) => {
+  const body = z.object({ vendorId: z.string().uuid(), notes: z.string().max(2000).optional(), lines: z.array(purchaseOrderLineSchema).min(1).max(200) }).parse(req.body);
+  const projectId = routeParam(req, "id");
+  const project = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } });
+  if (!project) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const vendor = await prisma.vendor.findFirst({ where: { id: body.vendorId, active: true } });
+  if (!vendor) return res.status(404).json({ error: { code: "VENDOR_NOT_FOUND", message: "Select an active vendor." } });
+  const subtotal = body.lines.reduce((sum, line) => sum.plus(money(line.quantity).mul(money(line.unitRate))), new Prisma.Decimal(0));
+  const orderNumber = "SNR-PO-" + new Date().getFullYear().toString().slice(-2) + "-" + randomUUID().slice(0, 8).toUpperCase();
+  const purchaseOrder = await prisma.$transaction(async tx => {
+    const po = await tx.purchaseOrder.create({ data: {
+      projectId, vendorId: vendor.id, orderNumber, notes: body.notes, subtotal,
+      createdById: req.user!.id,
+      lines: { create: body.lines.map(line => ({ ...line, quantity: money(line.quantity), unitRate: money(line.unitRate) })) }
+    }, include: { vendor: true, lines: true } });
+    await audit(tx, req.user!.id, "PURCHASE_ORDER_CREATED", "PurchaseOrder", po.id, { projectId, orderNumber, subtotal: subtotal.toFixed(2) });
+    return po;
+  });
+  return res.status(201).json({ purchaseOrder, message: "Purchase order created as draft. Submit it for approval before sending it to the vendor." });
+}));
+app.post("/api/purchase-orders/:id/submit", authenticate, allow(UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER, UserRole.PROCUREMENT), asyncRoute(async (req, res) => {
+  const po = await prisma.purchaseOrder.findUnique({ where: { id: routeParam(req, "id") } });
+  if (!po || po.status !== PurchaseOrderStatus.DRAFT) return res.status(409).json({ error: { code: "PURCHASE_ORDER_NOT_DRAFT", message: "Only a draft purchase order can be submitted." } });
+  const updated = await prisma.$transaction(async tx => {
+    const value = await tx.purchaseOrder.update({ where: { id: po.id }, data: { status: PurchaseOrderStatus.SUBMITTED } });
+    await audit(tx, req.user!.id, "PURCHASE_ORDER_SUBMITTED", "PurchaseOrder", po.id, { orderNumber: po.orderNumber });
+    return value;
+  });
+  return res.json({ purchaseOrder: updated });
+}));
+app.post("/api/purchase-orders/:id/approve", authenticate, allow(...financeRoles), asyncRoute(async (req, res) => {
+  const po = await prisma.purchaseOrder.findUnique({ where: { id: routeParam(req, "id") } });
+  if (!po || po.status !== PurchaseOrderStatus.SUBMITTED) return res.status(409).json({ error: { code: "PURCHASE_ORDER_NOT_SUBMITTED", message: "Only a submitted purchase order can be approved." } });
+  const updated = await prisma.$transaction(async tx => {
+    const value = await tx.purchaseOrder.update({ where: { id: po.id }, data: { status: PurchaseOrderStatus.APPROVED, approvedById: req.user!.id, approvedAt: new Date() } });
+    await audit(tx, req.user!.id, "PURCHASE_ORDER_APPROVED", "PurchaseOrder", po.id, { orderNumber: po.orderNumber, subtotal: po.subtotal.toString() });
+    return value;
+  });
+  return res.json({ purchaseOrder: updated, message: "Purchase order approved. Material receipts can now be recorded." });
+}));
+app.post("/api/purchase-orders/:id/receipts", authenticate, allow(...[...staffRoles, UserRole.AUDITOR]), asyncRoute(async (req, res) => {
+  const body = z.object({
+    receiptNumber: z.string().min(2).max(100),
+    receivedAt: z.string().datetime().optional(),
+    evidenceUrl: z.string().url().optional(),
+    notes: z.string().max(1000).optional(),
+    lines: z.array(z.object({ lineId: z.string().uuid(), receivedQty: z.number().positive().max(1_000_000) })).min(1).max(200)
+  }).parse(req.body);
+  const poId = routeParam(req, "id");
+  const result = await prisma.$transaction(async tx => {
+    const po = await tx.purchaseOrder.findUnique({ where: { id: poId }, include: { lines: true } });
+    if (!po || ![PurchaseOrderStatus.APPROVED, PurchaseOrderStatus.PARTIALLY_RECEIVED].includes(po.status)) throw Object.assign(new Error("Material can only be received against an approved purchase order."), { status: 409, code: "PURCHASE_ORDER_NOT_APPROVED" });
+    const lineMap = new Map(po.lines.map(line => [line.id, line]));
+    for (const received of body.lines) {
+      const line = lineMap.get(received.lineId);
+      if (!line || line.receivedQty.plus(received.receivedQty).greaterThan(line.quantity)) throw Object.assign(new Error("Received quantity exceeds the purchase order quantity or references an invalid line."), { status: 400, code: "INVALID_RECEIPT_QUANTITY" });
+    }
+    for (const received of body.lines) {
+      await tx.purchaseOrderLine.update({ where: { id: received.lineId }, data: { receivedQty: { increment: money(received.receivedQty) } } });
+    }
+    const receipt = await tx.materialReceipt.create({ data: {
+      purchaseOrderId: po.id, receiptNumber: body.receiptNumber, receivedAt: body.receivedAt ? new Date(body.receivedAt) : new Date(),
+      receivedBy: req.user!.id, evidenceUrl: body.evidenceUrl, notes: body.notes, lines: body.lines
+    } });
+    const fresh = await tx.purchaseOrder.findUniqueOrThrow({ where: { id: po.id }, include: { lines: true } });
+    const complete = fresh.lines.every(line => line.receivedQty.greaterThanOrEqualTo(line.quantity));
+    const updated = await tx.purchaseOrder.update({ where: { id: po.id }, data: { status: complete ? PurchaseOrderStatus.RECEIVED : PurchaseOrderStatus.PARTIALLY_RECEIVED } });
+    await audit(tx, req.user!.id, "MATERIAL_RECEIPT_RECORDED", "MaterialReceipt", receipt.id, { purchaseOrderId: po.id, receiptNumber: receipt.receiptNumber, complete });
+    return { receipt, purchaseOrder: updated };
+  });
+  return res.status(201).json({ ...result, message: "Material receipt recorded. Invoice/payment must still be verified and posted separately to the project ledger." });
+}));
+
+app.get("/api/projects/:id/labour", authenticate, asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const records = await prisma.labourRecord.findMany({ where: { projectId }, orderBy: { workDate: "desc" } });
+  return res.json({ labourRecords: records });
+}));
+app.post("/api/projects/:id/labour", authenticate, allow(...[...staffRoles, UserRole.AUDITOR]), asyncRoute(async (req, res) => {
+  const body = z.object({
+    workerName: z.string().min(2).max(160),
+    workDate: z.string().datetime(),
+    workType: z.string().min(2).max(100),
+    description: z.string().min(3).max(500),
+    quantity: z.number().positive().max(1_000_000),
+    unit: z.string().min(1).max(24),
+    rate: z.number().nonnegative().max(1_000_000_000),
+    evidenceUrl: z.string().url().optional()
+  }).parse(req.body);
+  const projectId = routeParam(req, "id");
+  const project = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } });
+  if (!project) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const amount = money(body.quantity).mul(money(body.rate));
+  const record = await prisma.$transaction(async tx => {
+    const labour = await tx.labourRecord.create({ data: {
+      projectId, workerName: body.workerName, workDate: new Date(body.workDate), workType: body.workType,
+      description: body.description, quantity: money(body.quantity), unit: body.unit, rate: money(body.rate),
+      amount, evidenceUrl: body.evidenceUrl, recordedById: req.user!.id
+    } });
+    await audit(tx, req.user!.id, "LABOUR_RECORD_SUBMITTED", "LabourRecord", labour.id, { projectId, amount: amount.toFixed(2) });
+    return labour;
+  });
+  return res.status(201).json({ labourRecord: record, message: "Labour record submitted for supervisor and finance review. It has not been charged to the project ledger." });
+}));
+app.post("/api/labour/:id/approve", authenticate, allow(...financeRoles), asyncRoute(async (req, res) => {
+  const record = await prisma.$transaction(async tx => {
+    const current = await tx.labourRecord.findUnique({ where: { id: routeParam(req, "id") } });
+    if (!current || current.status !== LabourRecordStatus.SUBMITTED) throw Object.assign(new Error("Only submitted labour records can be approved."), { status: 409, code: "LABOUR_RECORD_NOT_SUBMITTED" });
+    const approved = await tx.labourRecord.update({ where: { id: current.id }, data: { status: LabourRecordStatus.APPROVED, approvedById: req.user!.id, approvedAt: new Date() } });
+    await tx.ledgerEntry.create({ data: {
+      projectId: current.projectId, type: LedgerType.LABOUR_EXPENSE, status: LedgerStatus.PENDING,
+      amount: current.amount, description: "Approved labour: " + current.description,
+      vendorOrWorker: current.workerName, quantity: current.quantity, unit: current.unit, unitRate: current.rate,
+      evidenceUrl: current.evidenceUrl, idempotencyKey: "labour-record:" + current.id, createdById: req.user!.id
+    } });
+    await audit(tx, req.user!.id, "LABOUR_RECORD_APPROVED", "LabourRecord", current.id, { projectId: current.projectId, amount: current.amount.toString() });
+    return approved;
+  });
+  return res.json({ labourRecord: record, message: "Labour approved and queued as a pending ledger expense. Finance must separately approve and post the expense." });
 }));
 
 app.use((req, res) => res.status(404).json({ error: { code: "ROUTE_NOT_FOUND", message: "The requested service endpoint was not found." } }));

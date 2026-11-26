@@ -339,7 +339,7 @@ app.get("/api/projects/:id/statement.csv", authenticate, asyncRoute(async (req, 
   if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   const statement = await buildProjectStatement(projectId, req.user!);
   if (!statement) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
-  const csvCell = (value: unknown) => '"' + String(value ?? "").replace(/"/g, '""') + '"';
+  const csvCell = (value: unknown) => { const text = String(value ?? ""); const safe = /^[=+\-@\t\r]/.test(text) ? "'" + text : text; return '"' + safe.replace(/"/g, '""') + '"'; };
   const rows: unknown[][] = [
     ["Sanora Spaces — Project Statement"],
     ["Project", statement.project.name],

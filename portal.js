@@ -354,7 +354,7 @@
       for (const file of files) {
         const ticket = await api("/projects/" + encodeURIComponent(activeProjectId) + "/documents/upload-url", {
           method: "POST",
-          body: JSON.stringify({ fileName: file.name, contentType: file.type, sizeBytes: file.size, category: "SITE_PHOTO", description: "Site diary photo", projectUpdateId: updateId })
+          body: JSON.stringify({ fileName: file.name, contentType: file.type, sizeBytes: file.size, category: "SITE_PHOTO", description: "Site diary photo", projectUpdateId: updateId, customerVisible: $("#siteUpdateVisibility").checked })
         });
         const response = await fetch(ticket.uploadUrl, { method: ticket.method, headers: ticket.requiredHeaders, body: file });
         if (!response.ok) throw new Error("Photo upload failed for " + file.name + ". The site update itself was saved.");

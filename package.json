@@ -14,7 +14,7 @@
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/*.test.ts && node --check portal.js && node --check app.js && node --check pwa.js && node --check service-worker.js"
+    "test": "tsx --test tests/*.test.ts && node --check portal.js && node --check app.js && node --check pwa.js && node --check service-worker.js && node --check accept-invitation.js"
   },
   "dependencies": {
     "@prisma/client": "^6.19.0",

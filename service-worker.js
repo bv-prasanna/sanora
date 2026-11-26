@@ -1,8 +1,10 @@
-const CACHE_NAME = "sanora-shell-v1";
+const CACHE_NAME = "sanora-shell-v2";
 const STATIC_ASSETS = [
   "/",
   "/index.html",
   "/portal.html",
+  "/accept-invitation.html",
+  "/accept-invitation.js",
   "/styles.css",
   "/portal.css",
   "/app.js",
@@ -26,7 +28,7 @@ self.addEventListener("fetch", event => {
   if (request.method !== "GET") return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith("/api/")) return;
+  if (url.pathname.startsWith("/api/") || url.searchParams.has("token")) return;
   if (url.pathname.includes("/documents/") || url.searchParams.has("X-Amz-Signature")) return;
 
   if (request.mode === "navigate") {

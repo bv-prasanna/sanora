@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer"><meta name="theme-color" content="#14251f">
+<meta name="api-base-url" content="">
+<title>Activate Customer Account | Sanora Spaces</title>
+<link rel="stylesheet" href="portal.css">
+</head>
+<body class="portal-body">
+<main class="portal-shell">
+  <header class="portal-brandbar"><a class="brand" href="index.html"><span class="brand-mark">S<span>•</span></span><span>SANORA<small>SPACES</small></span></a><span class="brand-tagline">Smart Spaces, Better Life.</span></header>
+  <section class="auth-screen">
+    <div class="auth-copy"><span class="eyebrow">CUSTOMER ACCOUNT ACTIVATION</span><h1>Welcome to<br><em>Sanora Spaces.</em></h1><p>Set a secure password to activate your customer workspace. Your invitation link can be used only once and expires after seven days.</p></div>
+    <form id="activationForm" class="auth-card">
+      <span class="eyebrow">ACCOUNT SECURITY</span><h2>Set your password</h2>
+      <p>Use at least 12 characters. Do not reuse a password from another website.</p>
+      <label for="password">New password</label><input id="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required>
+      <label for="confirmPassword">Confirm password</label><input id="confirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required>
+      <button type="submit" id="activateButton">Activate account</button>
+      <p id="activationMessage" class="form-message" role="status" aria-live="polite"></p>
+      <a id="signInLink" href="portal.html" hidden>Go to customer sign in ↗</a>
+    </form>
+  </section>
+</main>
+<script src="accept-invitation.js"></script>
+</body></html>

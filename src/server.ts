@@ -7,7 +7,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { Prisma, PrismaClient, UserRole, ProjectStatus, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory, ProjectDocumentCategory, ProjectDocumentStatus, TopUpRequestStatus, ProjectMilestoneStatus, ProjectTaskStatus, ProjectTaskPriority, NotificationType, LeadStatus } from "@prisma/client";
 import { z, ZodError } from "zod";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { calculateProjectBalance, type PostedLedgerLine } from "./domain/ledger-balance.js";
@@ -178,8 +178,76 @@ app.get("/api/projects", authenticate, asyncRoute(async (req, res) => {
   const projects = await prisma.project.findMany({ where, orderBy: { updatedAt: "desc" }, include: { estimates: { where: req.user!.role === UserRole.CUSTOMER ? { status: { in: [EstimateStatus.SUBMITTED, EstimateStatus.APPROVED, EstimateStatus.SUPERSEDED, EstimateStatus.REJECTED] } } : undefined, orderBy: { version: "desc" }, take: 1, include: { lines: true } } } });
   return res.json({ projects });
 }));
-app.post("/api/projects", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
+
+const customerAdminRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER, UserRole.SALES];
+const invitationLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: "draft-8", legacyHeaders: false });
+app.get("/api/customers", authenticate, allow(...customerAdminRoles), asyncRoute(async (_req, res) => {
+  const customers = await prisma.user.findMany({
+    where: { active: true, role: UserRole.CUSTOMER },
+    select: { id: true, name: true, email: true, phone: true },
+    orderBy: { name: "asc" }, take: 1000
+  });
+  return res.json({ customers });
+}));
+app.post("/api/customer-invitations", authenticate, allow(...customerAdminRoles), asyncRoute(async (req, res) => {
+  const body = z.object({
+    name: z.string().trim().min(2).max(120),
+    email: z.string().trim().email().max(254),
+    phone: z.string().trim().max(24).optional()
+  }).parse(req.body);
+  const email = body.email.toLowerCase();
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing && (existing.active || existing.role !== UserRole.CUSTOMER)) return res.status(409).json({ error: { code: "CUSTOMER_EMAIL_ALREADY_REGISTERED", message: "This email already belongs to an active account." } });
+  const token = randomBytes(32).toString("hex");
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const passwordHash = await bcrypt.hash(randomUUID() + randomUUID(), 12);
+  const invitation = await prisma.$transaction(async tx => {
+    const customer = existing
+      ? await tx.user.update({ where: { id: existing.id }, data: { name: body.name, phone: body.phone, passwordHash, active: false } })
+      : await tx.user.create({ data: { name: body.name, email, phone: body.phone, passwordHash, role: UserRole.CUSTOMER, active: false } });
+    if (existing) await tx.customerInvitation.updateMany({ where: { userId: customer.id, acceptedAt: null, revokedAt: null }, data: { revokedAt: new Date() } });
+    const created = await tx.customerInvitation.create({
+      data: { userId: customer.id, invitedById: req.user!.id, email, tokenHash, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }
+    });
+    await audit(tx, req.user!.id, "CUSTOMER_INVITATION_CREATED", "CustomerInvitation", created.id, { email, userId: customer.id, expiresAt: created.expiresAt.toISOString() });
+    return { id: created.id, email: customer.email, name: customer.name, expiresAt: created.expiresAt };
+  });
+  const base = (process.env.PUBLIC_APP_URL || "").replace(/\/+$/, "");
+  const invitationUrl = base + "/accept-invitation.html?token=" + token;
+  return res.status(201).json({ invitation, invitationUrl, message: "Customer invitation created. Share this one-time activation link with the customer; no email is sent automatically." });
+}));
+app.post("/api/public/customer-invitations/accept", invitationLimiter, asyncRoute(async (req, res) => {
+  const body = z.object({
+    token: z.string().regex(/^[a-f0-9]{64}$/i),
+    password: z.string().min(12).max(128)
+  }).parse(req.body);
+  const tokenHash = createHash("sha256").update(body.token).digest("hex");
+  const invitation = await prisma.customerInvitation.findFirst({
+    where: { tokenHash, acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
+    include: { user: true }
+  });
+  if (!invitation || invitation.user.active || invitation.user.role !== UserRole.CUSTOMER) return res.status(400).json({ error: { code: "INVITATION_INVALID_OR_EXPIRED", message: "This invitation is invalid, expired or already used. Contact the Sanora team for a new invitation." } });
+  const passwordHash = await bcrypt.hash(body.password, 12);
+  await prisma.$transaction(async tx => {
+    const acceptedAt = new Date();
+    const claimed = await tx.customerInvitation.updateMany({ where: { id: invitation.id, acceptedAt: null, revokedAt: null, expiresAt: { gt: acceptedAt } }, data: { acceptedAt } });
+    if (!claimed.count) throw Object.assign(new Error("This invitation has already been used or expired."), { status: 409, code: "INVITATION_ALREADY_USED" });
+    const activated = await tx.user.updateMany({ where: { id: invitation.userId, active: false, role: UserRole.CUSTOMER }, data: { passwordHash, active: true } });
+    if (!activated.count) throw Object.assign(new Error("This customer account is already active. Please sign in."), { status: 409, code: "CUSTOMER_ALREADY_ACTIVE" });
+    await audit(tx, invitation.userId, "CUSTOMER_ACCOUNT_ACTIVATED", "User", invitation.userId, { invitationId: invitation.id });
+    if (invitation.invitedById !== invitation.userId) await notify(tx, {
+      recipientId: invitation.invitedById, actorId: invitation.userId, type: NotificationType.GENERAL,
+      title: "Customer account activated", message: invitation.user.name + " has activated their Sanora customer account.",
+      entityType: "CustomerInvitation", entityId: invitation.id
+    });
+  });
+  return res.json({ message: "Your Sanora customer account is active. You can now sign in." });
+}));
+
+app.post("/api/projects", authenticate, allow(...customerAdminRoles), asyncRoute(async (req, res) => {
   const body = z.object({ name: z.string().min(2).max(120), customerId: z.string().uuid(), location: z.string().max(180).optional(), description: z.string().max(2000).optional() }).parse(req.body);
+  const customer = await prisma.user.findFirst({ where: { id: body.customerId, role: UserRole.CUSTOMER, active: true }, select: { id: true } });
+  if (!customer) return res.status(400).json({ error: { code: "ACTIVE_CUSTOMER_REQUIRED", message: "Select a customer who has activated their account." } });
   const code = "SNR-" + new Date().getFullYear().toString().slice(-2) + "-" + randomUUID().slice(0, 6).toUpperCase();
   const project = await prisma.$transaction(async tx => {
     const p = await tx.project.create({ data: { ...body, code, createdById: req.user!.id } });

@@ -368,6 +368,17 @@
     populateVendorSelect(vendorsResult.vendors || []);
     renderProject(projectResult.project, ledger, orders, labour, updates, workPlan, financeQueue, statementResult.statement);
   }
+  async function loadCustomers() {
+    const result = await api("/customers");
+    const select = $("#projectCustomer"); select.replaceChildren();
+    if (!result.customers?.length) {
+      const option = window.document.createElement("option"); option.value = ""; option.textContent = "No activated customer accounts yet"; select.append(option);
+      return;
+    }
+    result.customers.forEach(customer => {
+      const option = window.document.createElement("option"); option.value = customer.id; option.textContent = customer.name + " · " + customer.email; select.append(option);
+    });
+  }
   async function updateLead(id, changes) {
     try {
       const result = await api("/leads/" + encodeURIComponent(id), { method: "PATCH", body: JSON.stringify(changes) });
@@ -501,6 +512,9 @@
       const leadRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SALES"].includes(currentUser?.role);
       $("#leadInbox").hidden = !leadRole;
       if (leadRole) await loadLeads();
+      const customerAdminRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SALES"].includes(currentUser?.role);
+      $("#customerAdminPanel").hidden = !customerAdminRole;
+      if (customerAdminRole) await loadCustomers();
       await loadNotifications();
     } catch (error) { message("#dashboardMessage", error.message, "error"); }
   }
@@ -609,6 +623,45 @@
       message("#siteUpdateMessage", error.message, "error");
       await loadProject(activeProjectId).catch(() => undefined);
     } finally { button.disabled = false; button.textContent = "Save site update"; }
+  });
+  $("#customerInviteForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    const formElement = event.currentTarget; const form = new FormData(formElement);
+    const button = formElement.querySelector('button[type="submit"]'); button.disabled = true; button.textContent = "Creating link…";
+    try {
+      const result = await api("/customer-invitations", { method: "POST", body: JSON.stringify({
+        name: form.get("name"), email: form.get("email"), phone: form.get("phone") || undefined
+      }) });
+      $("#invitationUrl").value = /^https?:\/\//i.test(result.invitationUrl) ? result.invitationUrl : (window.location.origin + result.invitationUrl);
+      $("#invitationResult").hidden = false;
+      message("#customerInviteMessage", result.message, "info");
+      formElement.reset();
+    } catch (error) { message("#customerInviteMessage", error.message, "error"); }
+    finally { button.disabled = false; button.textContent = "Create invitation link"; }
+  });
+  $("#copyInvitationUrl").addEventListener("click", async () => {
+    const url = $("#invitationUrl").value;
+    try {
+      await navigator.clipboard.writeText(url);
+      message("#customerInviteMessage", "Invitation link copied. Share it securely with the customer.", "info");
+    } catch { $("#invitationUrl").focus(); $("#invitationUrl").select(); message("#customerInviteMessage", "Copy is unavailable here. Select the invitation link and copy it manually.", "error"); }
+  });
+  $("#projectCreateForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    const formElement = event.currentTarget; const form = new FormData(formElement);
+    const button = formElement.querySelector('button[type="submit"]'); button.disabled = true; button.textContent = "Creating project…";
+    try {
+      const result = await api("/projects", { method: "POST", body: JSON.stringify({
+        customerId: form.get("customerId"), name: form.get("name"),
+        location: form.get("location") || undefined, description: form.get("description") || undefined
+      }) });
+      message("#projectCreateMessage", "Project " + result.project.code + " created.", "info");
+      formElement.reset();
+      await loadProjects(result.project.id);
+      await loadOperationsSummary();
+      $("#overview").scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (error) { message("#projectCreateMessage", error.message, "error"); }
+    finally { button.disabled = false; button.textContent = "Create project"; }
   });
   $("#vendorCreateForm").addEventListener("submit", async event => {
     event.preventDefault();

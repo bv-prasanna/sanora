@@ -713,7 +713,9 @@ const milestoneCreateSchema = z.object({
   targetDate: z.string().datetime().optional(),
   forecastDate: z.string().datetime().optional(),
   sequence: z.number().int().min(0).max(10000).optional(),
-  customerVisible: z.boolean().default(true)
+  customerVisible: z.boolean().default(false)
+}).superRefine((value, ctx) => {
+  if (value.targetDate && value.forecastDate && new Date(value.forecastDate) < new Date(value.targetDate)) ctx.addIssue({ code: "custom", message: "Forecast date cannot be earlier than the target date.", path: ["forecastDate"] });
 });
 const taskCreateSchema = z.object({
   title: z.string().trim().min(3).max(160),
@@ -726,6 +728,9 @@ const taskCreateSchema = z.object({
   dueDate: z.string().datetime().optional(),
   customerVisible: z.boolean().default(false),
   dependsOnIds: z.array(z.string().uuid()).max(20).default([])
+}).superRefine((value, ctx) => {
+  if (value.startDate && value.dueDate && new Date(value.dueDate) < new Date(value.startDate)) ctx.addIssue({ code: "custom", message: "Due date cannot be earlier than the start date.", path: ["dueDate"] });
+  if (new Set(value.dependsOnIds).size !== value.dependsOnIds.length) ctx.addIssue({ code: "custom", message: "A task dependency can be selected only once.", path: ["dependsOnIds"] });
 });
 async function validateTaskAssignee(projectId: string, userId: string) {
   const assignee = await prisma.user.findFirst({ where: { id: userId, active: true, role: { not: UserRole.CUSTOMER } }, select: { id: true, name: true, role: true } });
@@ -770,6 +775,7 @@ app.post("/api/projects/:id/milestones", authenticate, allow(...planningRoles), 
   const projectId = routeParam(req, "id");
   if (!(await projectAccess(req.user!, projectId, "UPDATE"))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   const body = milestoneCreateSchema.parse(req.body);
+  if (body.customerVisible && !(await projectAccess(req.user!, projectId, "MANAGE"))) return res.status(403).json({ error: { code: "MILESTONE_VISIBILITY_REQUIRES_MANAGER", message: "Only a project manager can publish milestones to the customer portal." } });
   const milestone = await prisma.$transaction(async tx => {
     const created = await tx.projectMilestone.create({ data: {
       projectId, title: body.title, description: body.description,
@@ -824,7 +830,7 @@ app.post("/api/projects/:id/tasks", authenticate, allow(...planningRoles), async
   if (body.assignedToId && !(await validateTaskAssignee(projectId, body.assignedToId))) return res.status(400).json({ error: { code: "INVALID_TASK_ASSIGNEE", message: "Assignee must be an active staff member assigned to this project." } });
   if (body.dependsOnIds.length) {
     const predecessors = await prisma.projectTask.findMany({ where: { id: { in: body.dependsOnIds }, projectId }, select: { id: true } });
-    if (predecessors.length !== new Set(body.dependsOnIds).size) return res.status(400).json({ error: { code: "INVALID_TASK_DEPENDENCY", message: "All dependencies must be different tasks from the same project." } });
+    if (predecessors.length !== body.dependsOnIds.length) return res.status(400).json({ error: { code: "INVALID_TASK_DEPENDENCY", message: "All dependencies must be different tasks from the same project." } });
   }
   const task = await prisma.$transaction(async tx => {
     const created = await tx.projectTask.create({ data: {

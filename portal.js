@@ -206,6 +206,35 @@
       if (estimate.assumptions) { const assumptions = window.document.createElement("p"); assumptions.textContent = "Assumptions: " + estimate.assumptions; details.append(assumptions); }
       if (estimate.exclusions) { const exclusions = window.document.createElement("p"); exclusions.textContent = "Exclusions: " + estimate.exclusions; details.append(exclusions); }
       card.append(details);
+      if (currentUser?.role === "CUSTOMER" && estimate.status === "APPROVED") {
+        if (!estimate.customerDecision) {
+          const actions = window.document.createElement("div"); actions.className = "estimate-customer-actions";
+          const accept = window.document.createElement("button"); accept.type = "button"; accept.className = "task-action"; accept.textContent = "Acknowledge indicative estimate";
+          const decline = window.document.createElement("button"); decline.type = "button"; decline.className = "task-action secondary-decline"; decline.textContent = "Request changes";
+          accept.addEventListener("click", async () => {
+            accept.disabled = true;
+            try {
+              const result = await api("/estimates/" + encodeURIComponent(estimate.id) + "/customer-response", { method: "POST", body: JSON.stringify({ decision: "ACCEPTED" }) });
+              message("#dashboardMessage", result.message, "info"); await loadProject(activeProjectId);
+            } catch (error) { message("#dashboardMessage", error.message, "error"); accept.disabled = false; }
+          });
+          decline.addEventListener("click", async () => {
+            const notes = window.prompt("What would you like Sanora to revise in this estimate?");
+            if (!notes || notes.trim().length < 3) return;
+            decline.disabled = true;
+            try {
+              const result = await api("/estimates/" + encodeURIComponent(estimate.id) + "/customer-response", { method: "POST", body: JSON.stringify({ decision: "DECLINED", notes: notes.trim() }) });
+              message("#dashboardMessage", result.message, "info"); await loadProject(activeProjectId);
+            } catch (error) { message("#dashboardMessage", error.message, "error"); decline.disabled = false; }
+          });
+          actions.append(accept, decline); card.append(actions);
+        } else {
+          const decision = window.document.createElement("small"); decision.className = "estimate-decision";
+          decision.textContent = "Your response: " + titleCase(estimate.customerDecision) + (estimate.customerDecisionAt ? " · " + date(estimate.customerDecisionAt) : "");
+          card.append(decision);
+          if (estimate.customerDecisionNotes) { const notes = window.document.createElement("p"); notes.className = "estimate-decision-notes"; notes.textContent = "Your note: " + estimate.customerDecisionNotes; card.append(notes); }
+        }
+      }
       if (estimate.status === "SUBMITTED" && ["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role)) {
         const approve = window.document.createElement("button"); approve.type = "button"; approve.className = "task-action"; approve.textContent = "Approve estimate";
         approve.addEventListener("click", async () => {

@@ -90,6 +90,7 @@ model User {
   createdTasks ProjectTask[] @relation("ProjectTaskCreator")
   notifications Notification[] @relation("NotificationRecipient")
   sentNotifications Notification[] @relation("NotificationActor")
+  assignedLeads Lead[] @relation("LeadAssignee")
 }
 
 model Project {
@@ -535,4 +536,32 @@ model Notification {
   project     Project?          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   @@index([recipientId, readAt, createdAt])
   @@index([projectId, createdAt])
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  SITE_VISIT
+  PROPOSAL
+  CONVERTED
+  LOST
+}
+
+model Lead {
+  id           String     @id @default(uuid())
+  name         String
+  email        String?
+  phone        String
+  interest     String
+  message      String?
+  source       String     @default("WEBSITE")
+  status       LeadStatus @default(NEW)
+  assignedToId String?
+  internalNotes String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  assignedTo   User?      @relation("LeadAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  @@index([status, createdAt])
+  @@index([assignedToId, status, createdAt])
 }

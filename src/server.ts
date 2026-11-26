@@ -5,7 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { Prisma, PrismaClient, UserRole, ProjectStatus, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory, ProjectDocumentCategory, ProjectDocumentStatus, TopUpRequestStatus, ProjectMilestoneStatus, ProjectTaskStatus, ProjectTaskPriority, NotificationType } from "@prisma/client";
+import { Prisma, PrismaClient, UserRole, ProjectStatus, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory, ProjectDocumentCategory, ProjectDocumentStatus, TopUpRequestStatus, ProjectMilestoneStatus, ProjectTaskStatus, ProjectTaskPriority, NotificationType, LeadStatus } from "@prisma/client";
 import { z, ZodError } from "zod";
 import { randomUUID } from "node:crypto";
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
@@ -15,6 +15,7 @@ import { hasSanoraPermission, redactAuditMetadata, estimateProjectTotal, validat
 
 const prisma = new PrismaClient();
 const app = express();
+app.set("trust proxy", 1);
 const port = Number(process.env.PORT || 4000);
 const jwtSecret = process.env.JWT_SECRET;
 if (!jwtSecret || jwtSecret.length < 32) throw new Error("JWT_SECRET must be configured with at least 32 characters.");
@@ -121,6 +122,37 @@ const notify = (tx: Prisma.TransactionClient, data: {
 
 
 app.get("/health", (_req, res) => res.json({ status: "ok", service: "sanora-api", timestamp: new Date().toISOString() }));
+
+
+const enquiryLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: "draft-8", legacyHeaders: false });
+app.post("/api/public/enquiries", enquiryLimiter, asyncRoute(async (req, res) => {
+  const body = z.object({
+    name: z.string().trim().min(2).max(120),
+    email: z.string().trim().email().max(254).optional().or(z.literal("")),
+    phone: z.string().trim().regex(/^[+0-9()\-\s]{7,24}$/),
+    interest: z.string().trim().min(2).max(120),
+    message: z.string().trim().max(2000).optional(),
+    companyWebsite: z.string().max(300).optional()
+  }).parse(req.body);
+  if (body.companyWebsite) return res.status(201).json({ message: "Thank you. Your enquiry has been received." });
+  const lead = await prisma.$transaction(async tx => {
+    const created = await tx.lead.create({ data: {
+      name: body.name, email: body.email ? body.email.toLowerCase() : null,
+      phone: body.phone, interest: body.interest, message: body.message, source: "WEBSITE"
+    } });
+    const recipients = await tx.user.findMany({
+      where: { active: true, role: { in: [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.SALES] } },
+      select: { id: true }
+    });
+    if (recipients.length) await tx.notification.createMany({ data: recipients.map(user => ({
+      recipientId: user.id, type: NotificationType.GENERAL, title: "New website enquiry",
+      message: created.name + " is interested in " + created.interest + ".",
+      entityType: "Lead", entityId: created.id
+    })) });
+    return created;
+  });
+  return res.status(201).json({ leadId: lead.id, message: "Thank you. Your enquiry has been received. The Sanora team will contact you shortly." });
+}));
 
 app.post("/api/auth/login", asyncRoute(async (req, res) => {
   const body = z.object({ email: z.string().email(), password: z.string().min(1) }).parse(req.body);
@@ -767,6 +799,48 @@ app.post("/api/project-updates/:id/customer-visibility", authenticate, allow(Use
 }));
 
 
+
+const leadRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER, UserRole.SALES];
+const leadGlobalRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS];
+app.get("/api/leads", authenticate, asyncRoute(async (req, res) => {
+  if (!leadRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "LEAD_ACCESS_RESTRICTED", message: "Lead management is available to authorised sales and management users." } });
+  const where: Prisma.LeadWhereInput = leadGlobalRoles.includes(req.user!.role)
+    ? {}
+    : { OR: [{ assignedToId: req.user!.id }, { assignedToId: null }] };
+  const leads = await prisma.lead.findMany({
+    where, orderBy: { createdAt: "desc" }, take: 100,
+    include: { assignedTo: { select: { id: true, name: true, role: true } } }
+  });
+  return res.json({ leads });
+}));
+app.patch("/api/leads/:id", authenticate, allow(...leadRoles), asyncRoute(async (req, res) => {
+  const id = routeParam(req, "id");
+  const current = await prisma.lead.findUnique({ where: { id } });
+  if (!current) return res.status(404).json({ error: { code: "LEAD_NOT_FOUND", message: "Enquiry was not found." } });
+  if (!leadGlobalRoles.includes(req.user!.role) && current.assignedToId && current.assignedToId !== req.user!.id) return res.status(404).json({ error: { code: "LEAD_NOT_FOUND", message: "Enquiry was not found." } });
+  const body = z.object({
+    status: z.nativeEnum(LeadStatus).optional(),
+    assignedToId: z.string().uuid().nullable().optional(),
+    internalNotes: z.string().trim().max(2000).nullable().optional()
+  }).parse(req.body);
+  if (body.assignedToId && !leadGlobalRoles.includes(req.user!.role) && body.assignedToId !== req.user!.id) return res.status(403).json({ error: { code: "LEAD_ASSIGNMENT_RESTRICTED", message: "Sales users can assign enquiries only to themselves." } });
+  if (body.assignedToId) {
+    const assignee = await prisma.user.findFirst({ where: { id: body.assignedToId, active: true, role: { in: leadRoles } }, select: { id: true } });
+    if (!assignee) return res.status(400).json({ error: { code: "INVALID_LEAD_ASSIGNEE", message: "Select an active sales or management user." } });
+  }
+  const updated = await prisma.$transaction(async tx => {
+    const saved = await tx.lead.update({ where: { id }, data: body, include: { assignedTo: { select: { id: true, name: true, role: true } } } });
+    if (body.assignedToId && body.assignedToId !== current.assignedToId && body.assignedToId !== req.user!.id) await notify(tx, {
+      recipientId: body.assignedToId, actorId: req.user!.id, type: NotificationType.GENERAL,
+      title: "Website enquiry assigned", message: "A new enquiry from " + saved.name + " has been assigned to you.",
+      entityType: "Lead", entityId: saved.id
+    });
+    await audit(tx, req.user!.id, "LEAD_UPDATED", "Lead", id, { changes: Object.keys(body), status: saved.status, assignedToId: saved.assignedToId });
+    return saved;
+  });
+  return res.json({ lead: updated, message: "Enquiry updated." });
+}));
+
 app.get("/api/notifications", authenticate, asyncRoute(async (req, res) => {
   const [notifications, unreadCount] = await Promise.all([
     prisma.notification.findMany({
@@ -801,8 +875,10 @@ app.get("/api/operations/summary", authenticate, asyncRoute(async (req, res) => 
     select: { id: true, code: true, name: true, status: true, location: true, updatedAt: true }
   });
   const projectIds = projects.map(project => project.id);
+  const leadWhere: Prisma.LeadWhereInput = leadGlobalRoles.includes(req.user!.role) ? {} : { OR: [{ assignedToId: req.user!.id }, { assignedToId: null }] };
+  const newLeads = leadRoles.includes(req.user!.role) ? await prisma.lead.count({ where: { ...leadWhere, status: LeadStatus.NEW } }) : 0;
   if (!projectIds.length) return res.json({
-    summary: { totalProjects: 0, activeProjects: 0, pendingTopUps: 0, pendingExpenseReviews: 0, purchaseOrdersAwaitingApproval: 0, labourRecordsAwaitingApproval: 0, blockedTasks: 0, overdueTasks: 0 },
+    summary: { totalProjects: 0, activeProjects: 0, pendingTopUps: 0, pendingExpenseReviews: 0, purchaseOrdersAwaitingApproval: 0, labourRecordsAwaitingApproval: 0, blockedTasks: 0, overdueTasks: 0, newLeads },
     recentProjects: []
   });
   const now = new Date();
@@ -818,7 +894,7 @@ app.get("/api/operations/summary", authenticate, asyncRoute(async (req, res) => 
   return res.json({
     summary: {
       totalProjects: projects.length, activeProjects, pendingTopUps, pendingExpenseReviews,
-      purchaseOrdersAwaitingApproval, labourRecordsAwaitingApproval, blockedTasks, overdueTasks
+      purchaseOrdersAwaitingApproval, labourRecordsAwaitingApproval, blockedTasks, overdueTasks, newLeads
     },
     recentProjects: projects.slice(0, 6)
   });

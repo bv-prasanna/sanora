@@ -728,6 +728,14 @@ app.post("/api/projects/:id/updates", authenticate, allow(UserRole.SUPER_ADMIN, 
     await audit(tx, req.user!.id, "PROJECT_UPDATE_RECORDED", "ProjectUpdate", created.id, {
       projectId, category: body.category, hasLocation: body.latitude !== undefined
     });
+    if (body.customerVisible) {
+      const project = await tx.project.findUnique({ where: { id: projectId }, select: { customerId: true } });
+      if (project?.customerId && project.customerId !== req.user!.id) await notify(tx, {
+        recipientId: project.customerId, actorId: req.user!.id, projectId, type: NotificationType.SITE_UPDATE_PUBLISHED,
+        title: "New site update published", message: "A new site update is available in your Sanora project workspace.",
+        entityType: "ProjectUpdate", entityId: created.id
+      });
+    }
     return created;
   });
   return res.status(201).json({ update, message: "Site update recorded successfully." });
@@ -745,6 +753,14 @@ app.post("/api/project-updates/:id/customer-visibility", authenticate, allow(Use
       data: { customerVisible: body.customerVisible }
     });
     await audit(tx, req.user!.id, "PROJECT_UPDATE_VISIBILITY_CHANGED", "ProjectUpdate", result.id, { projectId: result.projectId, customerVisible: body.customerVisible, linkedPhotosUpdated: photos.count });
+    if (body.customerVisible && !update.customerVisible) {
+      const project = await tx.project.findUnique({ where: { id: result.projectId }, select: { customerId: true } });
+      if (project?.customerId && project.customerId !== req.user!.id) await notify(tx, {
+        recipientId: project.customerId, actorId: req.user!.id, projectId: result.projectId, type: NotificationType.SITE_UPDATE_PUBLISHED,
+        title: "New site update published", message: "A site update is now available in your Sanora project workspace.",
+        entityType: "ProjectUpdate", entityId: result.id
+      });
+    }
     return result;
   });
   return res.json({ update: { id: saved.id, customerVisible: saved.customerVisible }, message: body.customerVisible ? "Site update published to the customer portal." : "Site update is now internal only." });

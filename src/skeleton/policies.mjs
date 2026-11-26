@@ -8,10 +8,13 @@ const roleGrants = Object.freeze({
   DIRECTOR: { sanora: ["view","create","edit","delete","approve","export","manage"] },
   CORPORATE_OPS: { sanora: ["view","create","edit","export","manage"] },
   BRANCH_MANAGER: { sanora: ["view","create","edit","export"] },
+  BRANCH_PARTNER: { sanora: ["view","create","edit","export"] },
+  SALES: { sanora: ["view","create","edit"] },
   SITE_ENGINEER: { sanora: ["view","create","edit"] },
   PROCUREMENT: { sanora: ["view","create","edit"] },
   FINANCE: { sanora: ["view","create","edit","approve","export"] },
-  CUSTOMER: { sanora: ["view","create"] }
+  CUSTOMER: { sanora: ["view","create"] },
+  AUDITOR: { sanora: ["view","export"] }
 });
 export function hasSanoraPermission(roles, action) {
   return allowedSimple({ roles, roleGrants, resource: "sanora", action });

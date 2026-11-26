@@ -1,6 +1,6 @@
 # SANORA SPACES — Business Requirements Document (BRD)
 
-**Version:** 1.3  
+**Version:** 1.4  
 **Status:** Requirements baseline for product discovery and implementation  
 **Company:** Sanora Spaces  
 **Tagline:** Smart Spaces, Better Life.
@@ -283,6 +283,105 @@ Every branch that executes construction work must maintain a separate, organised
 - Monthly branch compliance reports must show project-wise physical-file checklist status, portal upload completeness, pending reviews and overdue items.
 - Site engineers must be able to capture/upload documents and photographs from mobile at the project site, including offline queueing with clear sync status where technically feasible.
 
+## 8.7 Standardised construction delivery methodology (Agile-inspired)
+
+Sanora construction projects must be executed through a repeatable, measurable and auditable delivery framework. Borrow the useful management practices of software Agile—work breakdown, prioritised backlogs, short planning cycles, Kanban flow, daily updates, reviews, dashboards and retrospectives—while retaining construction-specific engineering controls, statutory approvals, site safety and quality inspections. This is an adaptive project-delivery framework, not permission to bypass approved drawings, engineering sign-offs, statutory requirements or stage-gate approvals.
+
+**Project delivery setup**
+- At project kickoff, create a project charter containing scope, exclusions, customer expectations, approved estimate/BOQ, baseline schedule, target completion date, key stakeholders, assigned branch, project manager, site engineer and escalation contacts.
+- Break the approved scope into a Work Breakdown Structure (WBS): phases → work packages → activities/tasks → measurable deliverables.
+- Define dependencies, predecessor tasks, estimated duration, planned start/finish, resource/crew, material requirements, responsible person, reviewer and customer visibility for each task.
+- Establish baseline milestones, critical path and a project calendar. Changes to approved scope, dates or cost must use a change request with impact analysis and authorised approval.
+- Use reusable project templates by type (residential villa, duplex, farmhouse, PEB shed, warehouse, renovation, etc.) while allowing authorised project-specific tailoring.
+
+**Kanban and work management**
+- Provide project-level and branch-level Kanban boards. Configurable columns should include Backlog / Planned → Ready → In Progress → Blocked / On Hold → Quality / Internal Review → Customer Approval (where applicable) → Done. A task may be cancelled only with a reason and audit record.
+- Cards must show task ID/title, phase, owner/crew, priority, planned dates, due date, status, progress, dependencies, branch, site, material readiness, linked documents, photos/evidence, blockers and approval state.
+- Support drag-and-drop only where the user's permissions and workflow rules allow it. Moving a card must validate dependencies, required documents, resource readiness and stage-gate conditions.
+- Provide list, Kanban, calendar, Gantt/timeline and milestone views from the same underlying task records; avoid separate inconsistent status stores.
+- Support task assignment, comments, @mentions, checklists, attachments, recurring inspections, subtasks, predecessor/successor links, WIP limits, labels and saved filters.
+- A blocked task must capture blocker category, description, owner responsible for resolution, date raised, expected resolution and escalation status.
+- Track planned vs actual dates, task duration, overdue age, rework, completion evidence and reason for schedule variance.
+
+**Sprint / look-ahead planning adapted for construction**
+- The project manager and site engineer maintain a rolling short-term work plan (for example, weekly or fortnightly), selected according to project complexity and site conditions.
+- Planning meeting confirms work packages, measurable commitments, labour/crew availability, materials, equipment, drawings, permits, predecessor completion and site readiness.
+- Daily site updates record completed quantities, labour attendance, material received/consumed, photographs, safety/quality observations, blockers and next-day plan.
+- Weekly review compares planned vs completed work, resolves blockers, updates forecasts and communicates customer-relevant changes.
+- At the end of each planning cycle, review completed deliverables, inspect quality, record accepted/rejected work, capture lessons and reprioritise the remaining backlog.
+- Construction activities must not be marked Done solely because a task card was moved. Require quantity/evidence and relevant engineer/quality approval; require customer approval only for explicitly defined customer decision points.
+
+**Construction stage gates and quality controls**
+- Configure mandatory gates for design freeze, statutory approvals, site handover, foundation inspection, structural checks, concealed MEP inspection, waterproofing, finishing, testing/commissioning and handover as applicable.
+- Each gate defines prerequisites, checklist, required document versions, responsible inspector, evidence, result (Pass / Fail / Conditional), corrective actions and sign-off.
+- A failed inspection creates a corrective/rework task linked to the original task and blocks dependent work where safety or quality requires it.
+- Approved drawings and revisions must be linked to relevant tasks and work orders. Work against superseded drawings must be prevented or explicitly exception-approved and audited.
+- Track non-conformance reports, safety incidents, corrective/preventive actions and closure verification.
+- The project manager may request a stage transition, but only designated approvers can approve controlled gates.
+
+**Progress measurement and forecasting**
+- Define objective progress measures per activity: quantity completed / total quantity, checklist completion, accepted deliverables or approved milestone weighting.
+- Do not use arbitrary manual percentages as the sole source of project progress. Show the calculation basis and allow authorised corrections with reason and audit history.
+- Distinguish physical progress, task completion, financial progress (spent/committed/funds received) and schedule progress; do not combine these into one misleading percentage.
+- Dashboard forecasts should include baseline vs forecast finish, milestone slippage, critical blockers, planned vs actual quantities, cost variance and remaining work.
+- Support approved baseline re-planning with version history; preserve the original baseline for variance reporting.
+
+## 8.8 Client live tracking, status and document access
+
+The customer app/portal must provide continuous, self-service visibility into the customer's own project. A customer should not need to call the branch for routine status checks.
+
+**Client project home**
+- Show current lifecycle stage, current work package, overall project status, next milestone, planned vs forecast dates, last updated timestamp and the person/team responsible for the next action.
+- Show project progress with a clearly explained calculation basis and separate indicators for physical progress, milestone completion, schedule health and financial position.
+- Provide a customer-friendly timeline/activity feed showing completed milestones, upcoming work, approved changes, inspection outcomes and customer actions pending.
+- Show project health as On Track / At Risk / Delayed / On Hold / Completed with reason, impact and recovery plan where relevant. Do not hide delays or present stale status as live.
+- Display latest site diary updates, approved photographs/videos, progress summaries and next planned activities. Geo-tag/time metadata may be shown where appropriate and safe.
+- Provide customer questions, clarification requests, issue/dispute reporting and change-request submission with a traceable response and resolution history.
+
+**Document centre**
+- Customers can browse, preview and download documents explicitly marked Approved and Customer-Shareable, including agreements, approved drawings, statutory approvals, receipts, expense invoices/proofs and handover documents as permitted.
+- Show document category, title, revision/version, approval status, date, and whether it is current or superseded. Clearly identify the current approved drawing/document.
+- Notify customers when a new shareable document is approved, a revision supersedes an earlier version, an approval/action is required, or a requested correction is available.
+- Customer access must never expose internal comments, confidential vendor pricing, employee personal data, other customers' records, unapproved drafts or restricted partner/branch documents.
+- Record customer document views/downloads where appropriate for audit and dispute resolution.
+
+**Customer approvals and communication**
+- Provide approval requests for defined decisions such as design selections, drawing sign-off, material/finish choices, scope changes and milestone acceptance.
+- Each request includes context, relevant approved document/version, cost/time impact where applicable, due date and Accept / Reject / Request Clarification actions.
+- Capture the acting customer user, timestamp, response, comments and version accepted. Approval must not be inferred from opening or downloading a document.
+- Notify customers about meaningful events: stage changes, milestone completion, delay or recovery plan, site update, document approval, expense posting, receipt/top-up, low project-fund balance, inspection result and pending decision.
+- Notifications are supplemental; the portal remains the source of truth and shows delivery status where available.
+
+**Status freshness and service expectations**
+- Show the last successful update time and clearly flag projects/tasks whose site update is overdue.
+- Site teams must submit updates at a configurable cadence (for example, daily on active workdays); missed updates trigger reminders and escalation to the project manager/branch manager.
+- Customer-facing status is derived from approved task/milestone events and authorised updates, not directly from unreviewed internal task edits.
+- Provide mobile-responsive access and accessible document preview/download. Support offline field capture and later sync where technically feasible, with conflict handling and sync status.
+
+## 8.9 Project dashboards and operational reviews
+
+Provide role-specific dashboards using the same source records, with filters for company, branch, project, project type, site engineer, project manager, phase, status and date range.
+
+- **Executive dashboard:** portfolio count/value, stage distribution, on-track/at-risk/delayed projects, forecast completions, milestone slippage, cost variance, funds exposure, quality/safety exceptions and branch comparison.
+- **Project manager dashboard:** Kanban WIP, overdue/blocked tasks, critical path, next 7/14/30-day look-ahead, approvals pending, change requests, inspections, procurement readiness and action owners.
+- **Site engineer dashboard:** today's planned tasks, site diary, labour/crew, material requirements/receipts, inspections due, safety checklist, blockers and upload queue.
+- **Branch manager dashboard:** branch project pipeline, physical and digital file compliance, progress freshness, delayed projects, resource constraints, customer issues and escalation queue.
+- **Procurement dashboard:** material requests, quotation comparison, purchase approvals, orders due, delivery/GRN status, shortages and vendor performance.
+- **Finance dashboard:** project receipts/top-ups, approved expenses, commitments, available funds, forecast cost, threshold alerts and reconciliation exceptions.
+- **Customer dashboard:** own-project status, timeline, upcoming milestones, recent site updates, approved documents, pending decisions, funds statement and support requests.
+- Provide trend charts and downloadable reports for planned vs actual progress, schedule variance, cost variance, task ageing, rework, quality, safety, document completeness and customer response times.
+- Schedule daily/weekly operational review reports and preserve review decisions/action items with owners and due dates.
+
+## 8.10 Project governance, change and audit trail
+
+- Every project has a named accountable Project Manager and designated Site Engineer; responsibilities may be combined only through an authorised role assignment.
+- Define a RACI matrix for each project template covering customer, branch manager, project manager, site engineer, procurement, finance, quality/safety, document controller and corporate approvers.
+- Maintain a decision log, risk register, issue register, change-request register and lessons-learned record.
+- Scope, design, BOQ, cost, milestone and schedule changes require impact assessment and approval before implementation, except documented emergency/safety actions followed by review.
+- Maintain immutable status history for tasks, milestones, stage gates, approvals, dates, progress calculations, assignments, blockers and customer-visible updates.
+- Escalate overdue tasks, unresolved blockers, missed site updates, failed inspections, delayed procurement, low funds and pending customer decisions using configurable thresholds.
+- Dashboards must distinguish operational estimates from approved commitments and actual posted financial ledger entries.
+
 ## 9. Website and applications
 
 ### 9.1 Public corporate website
@@ -373,7 +472,7 @@ All money movements and entitlements must have unique IDs, timestamps, actor, so
 - Physical-file index can be printed and reconciled against the portal register during branch audits.
 - Construction customer can view every posted project receipt and expense with supporting documents.
 - Low project balance triggers configurable notifications.
-- Privileged changes, approvals, reversals and period reopenings are fully auditable.
+- Privileged changes, approvals, reversals and period reopenings are fully auditable.\n- Construction projects use reusable WBS/templates, task ownership, dependencies, short-term look-ahead planning, Kanban boards, daily site updates, periodic reviews and measurable deliverables.\n- Task and milestone transitions enforce configured document, dependency, inspection and approval gates.\n- Customers can track their own project's current status, milestones, progress basis, planned/forecast dates, recent site updates and pending actions from the app/portal.\n- Customers can securely preview/download approved customer-shareable documents and see current revisions without access to internal or confidential records.\n- Project dashboards expose role-appropriate schedule, progress, blockers, cost, quality, safety, document and financial indicators.\n- Delays, blocked work, failed inspections, stale updates and scope/schedule/cost changes have owners, escalation paths and audit history.
 
 ## 16. Open decisions for business/legal sign-off
 
@@ -391,4 +490,4 @@ These are configuration/policy decisions, not assumptions to hard-code:
 
 ---
 
-**Document control:** Version 1.3 adds mandatory branch-maintained physical project files and a corresponding controlled digital document register in the Sanora portal, including checklists, review/version workflows, access controls, handover and branch audits. It retains the configurable property scheme model, independent property/construction referral programmes, and locality branch partner profit-sharing and monthly reconciliation requirements. This BRD is a business requirements baseline; detailed UX, API contracts, database schema, accounting policy and legal agreements are subsequent design deliverables.
+**Document control:** Version 1.4 adds an Agile-inspired construction delivery framework with WBS, Kanban, short-term planning/reviews, stage gates, progress measurement, role-based dashboards and continuous customer project tracking/document access. It retains the v1.3 physical/digital project-file controls, configurable property scheme model, independent property/construction referral programmes, and locality branch partner profit-sharing and monthly reconciliation requirements. This BRD is a business requirements baseline; detailed UX, API contracts, database schema, accounting policy and legal agreements are subsequent design deliverables.

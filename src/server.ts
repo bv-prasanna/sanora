@@ -156,12 +156,18 @@ app.post("/api/projects/:id/ledger", authenticate, asyncRoute(async (req, res) =
   if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   if (req.user!.role === UserRole.CUSTOMER && body.type !== "TOP_UP") return res.status(403).json({ error: { code: "CUSTOMER_LEDGER_RESTRICTED", message: "Customers can submit top-up receipts. Expense entries are recorded by authorised project staff." } });
   if (body.type === "TOP_UP" && ![...financeRoles, UserRole.CUSTOMER].includes(req.user!.role)) return res.status(403).json({ error: { code: "TOP_UP_ROLE_REQUIRED", message: "Only customers or finance staff can record a top-up receipt." } });
+  if (body.type === "REFUND" && !financeRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "FINANCE_APPROVAL_REQUIRED", message: "Only finance-authorised users can submit project refunds." } });
   if (body.type !== "TOP_UP" && !staffRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "STAFF_ROLE_REQUIRED", message: "Only authorised project staff can submit expenses." } });
   const key = req.header("Idempotency-Key");
   if (!key || key.length < 8 || key.length > 120) return res.status(400).json({ error: { code: "IDEMPOTENCY_KEY_REQUIRED", message: "Provide a unique Idempotency-Key header for this transaction." } });
   const entry = await prisma.$transaction(async tx => {
     const exists = await tx.ledgerEntry.findUnique({ where: { idempotencyKey: key } });
-    if (exists) return exists;
+    if (exists) {
+      if (exists.projectId !== projectId || exists.createdById !== req.user!.id) {
+        throw Object.assign(new Error("This idempotency key has already been used for another request."), { status: 409, code: "IDEMPOTENCY_KEY_CONFLICT" });
+      }
+      return exists;
+    }
     const created = await tx.ledgerEntry.create({ data: {
       projectId, type: body.type as LedgerType, amount: money(body.amount),
       description: body.description, reference: body.reference, vendorOrWorker: body.vendorOrWorker,

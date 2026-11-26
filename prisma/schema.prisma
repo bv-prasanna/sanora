@@ -41,6 +41,11 @@ enum EstimateStatus {
   REJECTED
 }
 
+enum EstimateCustomerDecision {
+  ACCEPTED
+  DECLINED
+}
+
 enum LedgerType {
   TOP_UP
   MATERIAL_EXPENSE
@@ -89,6 +94,7 @@ model User {
   reviewedTopUps TopUpRequest[] @relation("TopUpReviewer")
   assignedTasks ProjectTask[] @relation("ProjectTaskAssignee")
   createdTasks ProjectTask[] @relation("ProjectTaskCreator")
+  customerEstimateResponses Estimate[] @relation("EstimateCustomerResponder")
   notifications Notification[] @relation("NotificationRecipient")
   sentNotifications Notification[] @relation("NotificationActor")
   assignedLeads Lead[] @relation("LeadAssignee")
@@ -147,10 +153,16 @@ model Estimate {
   createdById String
   createdAt   DateTime       @default(now())
   approvedAt  DateTime?
+  customerDecision EstimateCustomerDecision?
+  customerDecisionAt DateTime?
+  customerDecisionById String?
+  customerDecisionNotes String?
+  customerDecisionBy User? @relation("EstimateCustomerResponder", fields: [customerDecisionById], references: [id])
   project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   lines       EstimateLine[]
   @@unique([projectId, version])
   @@index([projectId, status])
+  @@index([customerDecisionById, customerDecisionAt])
 }
 
 model EstimateLine {
@@ -519,6 +531,9 @@ enum NotificationType {
   LABOUR_APPROVED
   PURCHASE_ORDER_APPROVED
   SITE_UPDATE_PUBLISHED
+  ESTIMATE_APPROVED
+  ESTIMATE_ACCEPTED
+  ESTIMATE_DECLINED
   GENERAL
 }
 

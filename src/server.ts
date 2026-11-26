@@ -5,7 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { Prisma, PrismaClient, UserRole, ProjectStatus, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory, ProjectDocumentCategory, ProjectDocumentStatus, TopUpRequestStatus, ProjectMilestoneStatus, ProjectTaskStatus, ProjectTaskPriority, NotificationType, LeadStatus } from "@prisma/client";
+import { Prisma, PrismaClient, UserRole, ProjectStatus, LedgerType, LedgerStatus, EstimateStatus, EstimateCustomerDecision, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory, ProjectDocumentCategory, ProjectDocumentStatus, TopUpRequestStatus, ProjectMilestoneStatus, ProjectTaskStatus, ProjectTaskPriority, NotificationType, LeadStatus } from "@prisma/client";
 import { z, ZodError } from "zod";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
@@ -324,9 +324,54 @@ app.post("/api/estimates/:id/approve", authenticate, allow(...financeRoles), asy
     await tx.estimate.updateMany({ where: { projectId: current.projectId, status: EstimateStatus.APPROVED }, data: { status: EstimateStatus.SUPERSEDED } });
     const updated = await tx.estimate.update({ where: { id: current.id }, data: { status: EstimateStatus.APPROVED, approvedAt: new Date() } });
     await audit(tx, req.user!.id, "ESTIMATE_APPROVED", "Estimate", updated.id, { projectId: current.projectId });
+    const project = await tx.project.findUnique({ where: { id: current.projectId }, select: { customerId: true, code: true } });
+    if (project?.customerId && project.customerId !== req.user!.id) await notify(tx, {
+      recipientId: project.customerId, actorId: req.user!.id, projectId: current.projectId, type: NotificationType.ESTIMATE_APPROVED,
+      title: "Indicative estimate ready for your response",
+      message: "Estimate v" + updated.version + " for project " + project.code + " is approved by Sanora and ready for your acknowledgement or feedback.",
+      entityType: "Estimate", entityId: updated.id
+    });
     return updated;
   });
   return res.json({ estimate });
+}));
+
+
+app.post("/api/estimates/:id/customer-response", authenticate, allow(UserRole.CUSTOMER), asyncRoute(async (req, res) => {
+  const id = routeParam(req, "id");
+  const current = await prisma.estimate.findUnique({
+    where: { id },
+    include: { project: { select: { id: true, customerId: true, createdById: true, code: true } } }
+  });
+  if (!current || current.project.customerId !== req.user!.id) return res.status(404).json({ error: { code: "ESTIMATE_NOT_FOUND", message: "Estimate was not found." } });
+  if (current.status !== EstimateStatus.APPROVED) return res.status(409).json({ error: { code: "ESTIMATE_NOT_READY_FOR_CUSTOMER", message: "The estimate must be approved by Sanora before you can respond." } });
+  if (current.customerDecision) return res.status(409).json({ error: { code: "ESTIMATE_ALREADY_RESPONDED", message: "You have already responded to this estimate version." } });
+  const body = z.object({
+    decision: z.nativeEnum(EstimateCustomerDecision),
+    notes: z.string().trim().max(1000).optional()
+  }).parse(req.body);
+  if (body.decision === EstimateCustomerDecision.DECLINED && !body.notes) return res.status(400).json({ error: { code: "DECLINE_REASON_REQUIRED", message: "Please add a short note explaining what needs to change." } });
+  await prisma.$transaction(async tx => {
+    const changed = await tx.estimate.updateMany({
+      where: { id, status: EstimateStatus.APPROVED, customerDecision: null },
+      data: { customerDecision: body.decision, customerDecisionAt: new Date(), customerDecisionById: req.user!.id, customerDecisionNotes: body.notes }
+    });
+    if (!changed.count) throw Object.assign(new Error("This estimate has already received a customer response."), { status: 409, code: "ESTIMATE_ALREADY_RESPONDED" });
+    await audit(tx, req.user!.id, body.decision === EstimateCustomerDecision.ACCEPTED ? "CUSTOMER_ACCEPTED_INDICATIVE_ESTIMATE" : "CUSTOMER_DECLINED_INDICATIVE_ESTIMATE", "Estimate", id, {
+      projectId: current.projectId, version: current.version, decision: body.decision, notes: body.notes ?? null
+    });
+    const recipients = new Set([current.createdById, current.project.createdById].filter(value => value !== req.user!.id));
+    for (const recipientId of recipients) await notify(tx, {
+      recipientId, actorId: req.user!.id, projectId: current.projectId,
+      type: body.decision === EstimateCustomerDecision.ACCEPTED ? NotificationType.ESTIMATE_ACCEPTED : NotificationType.ESTIMATE_DECLINED,
+      title: body.decision === EstimateCustomerDecision.ACCEPTED ? "Customer acknowledged estimate" : "Customer requested estimate changes",
+      message: "Customer " + (body.decision === EstimateCustomerDecision.ACCEPTED ? "acknowledged" : "declined") + " indicative estimate v" + current.version + " for project " + current.project.code + ".",
+      entityType: "Estimate", entityId: id
+    });
+  });
+  return res.json({ message: body.decision === EstimateCustomerDecision.ACCEPTED
+    ? "Your acknowledgement has been recorded. The estimate remains indicative and does not create a fixed-price contract."
+    : "Your feedback has been sent to the Sanora team. The estimate remains unchanged until a revised version is issued." });
 }));
 
 const ledgerSchema = z.object({

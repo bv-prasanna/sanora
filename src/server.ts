@@ -324,6 +324,13 @@ app.post("/api/estimates/:id/approve", authenticate, allow(...financeRoles), asy
     await tx.estimate.updateMany({ where: { projectId: current.projectId, status: EstimateStatus.APPROVED }, data: { status: EstimateStatus.SUPERSEDED } });
     const updated = await tx.estimate.update({ where: { id: current.id }, data: { status: EstimateStatus.APPROVED, approvedAt: new Date() } });
     await audit(tx, req.user!.id, "ESTIMATE_APPROVED", "Estimate", updated.id, { projectId: current.projectId });
+    const project = await tx.project.findUnique({ where: { id: current.projectId }, select: { customerId: true, code: true } });
+    if (project?.customerId && project.customerId !== req.user!.id) await notify(tx, {
+      recipientId: project.customerId, actorId: req.user!.id, projectId: current.projectId, type: NotificationType.ESTIMATE_APPROVED,
+      title: "Indicative estimate ready for your response",
+      message: "Estimate v" + updated.version + " for project " + project.code + " is approved by Sanora and ready for your acknowledgement or feedback.",
+      entityType: "Estimate", entityId: updated.id
+    });
     return updated;
   });
   return res.json({ estimate });

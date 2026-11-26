@@ -5,9 +5,11 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { Prisma, PrismaClient, UserRole, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory } from "@prisma/client";
+import { Prisma, PrismaClient, UserRole, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory, ProjectDocumentCategory, ProjectDocumentStatus } from "@prisma/client";
 import { z, ZodError } from "zod";
 import { randomUUID } from "node:crypto";
+import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { calculateProjectBalance, type PostedLedgerLine } from "./domain/ledger-balance.js";
 import { hasSanoraPermission, redactAuditMetadata, estimateProjectTotal, validateProjectTransition } from "./skeleton/policies.mjs";
 
@@ -77,6 +79,34 @@ const projectAccess = async (user: AuthUser, projectId: string, requiredAccess: 
   if (requiredAccess === "UPDATE") return member.access === "UPDATE" || member.access === "MANAGE";
   return member.access === "MANAGE";
 };
+
+const documentMaxBytes = 15 * 1024 * 1024;
+const allowedDocumentTypes = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]);
+let privateObjectStore: S3Client | null = null;
+function getPrivateObjectStore() {
+  const bucket = process.env.S3_BUCKET;
+  if (!bucket) throw Object.assign(new Error("Private document storage is not configured. Please contact the administrator."), { status: 503, code: "DOCUMENT_STORAGE_NOT_CONFIGURED" });
+  if (!privateObjectStore) {
+    privateObjectStore = new S3Client({
+      region: process.env.S3_REGION || "ap-south-1",
+      ...(process.env.S3_ENDPOINT ? { endpoint: process.env.S3_ENDPOINT } : {}),
+      ...(process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY ? {
+        credentials: { accessKeyId: process.env.S3_ACCESS_KEY_ID, secretAccessKey: process.env.S3_SECRET_ACCESS_KEY }
+      } : {}),
+      forcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true"
+    });
+  }
+  return { client: privateObjectStore, bucket };
+}
+const documentUploadSchema = z.object({
+  fileName: z.string().min(1).max(180),
+  contentType: z.string().min(1).max(120),
+  sizeBytes: z.number().int().positive().max(documentMaxBytes),
+  category: z.nativeEnum(ProjectDocumentCategory).default(ProjectDocumentCategory.OTHER),
+  description: z.string().max(500).optional()
+});
+const safeFileName = (name: string) => name.replace(/[\\/\\\\\\u0000-\\u001f\\u007f]/g, "_").replace(/\\s+/g, " ").trim().slice(0, 180) || "document";
+
 const money = (v: Prisma.Decimal | number | string) => new Prisma.Decimal(v);
 const audit = (tx: Prisma.TransactionClient, actorId: string, action: string, entityType: string, entityId: string, metadata?: Prisma.InputJsonValue) =>
   tx.auditLog.create({ data: { actorId, action, entityType, entityId, metadata } });
@@ -518,6 +548,87 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   console.error("Unhandled API error", err);
   return res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong. Please try again or contact support." } });
 });
+
+
+app.get("/api/projects/:id/documents", authenticate, asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const customer = req.user!.role === UserRole.CUSTOMER;
+  const documents = await prisma.projectDocument.findMany({
+    where: { projectId, status: ProjectDocumentStatus.AVAILABLE, ...(customer ? { customerVisible: true } : {}) },
+    select: { id: true, category: true, originalName: true, contentType: true, sizeBytes: true, description: true, customerVisible: true, createdAt: true, availableAt: true, uploadedBy: { select: { name: true } } },
+    orderBy: { createdAt: "desc" }, take: 100
+  });
+  return res.json({ documents });
+}));
+
+app.post("/api/projects/:id/documents/upload-url", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId, "UPDATE"))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const body = documentUploadSchema.parse(req.body);
+  if (!allowedDocumentTypes.has(body.contentType)) return res.status(415).json({ error: { code: "DOCUMENT_TYPE_NOT_ALLOWED", message: "This file type is not supported. Upload PDF, JPG, PNG, WebP, DOC, DOCX or XLSX files." } });
+  const { client, bucket } = getPrivateObjectStore();
+  const documentId = randomUUID();
+  const storageKey = "projects/" + projectId + "/documents/" + documentId;
+  const document = await prisma.projectDocument.create({
+    data: { id: documentId, projectId, uploadedById: req.user!.id, category: body.category, originalName: safeFileName(body.fileName), storageKey, contentType: body.contentType, sizeBytes: body.sizeBytes, description: body.description }
+  });
+  try {
+    const command = new PutObjectCommand({
+      Bucket: bucket, Key: storageKey, ContentType: body.contentType,
+      Metadata: { "sanora-document-id": documentId, "sanora-project-id": projectId, "sanora-uploader-id": req.user!.id }
+    });
+    const uploadUrl = await getSignedUrl(client, command, { expiresIn: 300 });
+    await prisma.auditLog.create({ data: { actorId: req.user!.id, action: "PROJECT_DOCUMENT_UPLOAD_REQUESTED", entityType: "ProjectDocument", entityId: documentId, metadata: { projectId, category: body.category, sizeBytes: body.sizeBytes } } });
+    return res.status(201).json({ document: { id: document.id, fileName: document.originalName, contentType: document.contentType, sizeBytes: document.sizeBytes }, uploadUrl, method: "PUT", requiredHeaders: { "Content-Type": body.contentType }, expiresInSeconds: 300, message: "Upload URL created. Upload the file, then confirm completion." });
+  } catch (error) {
+    await prisma.projectDocument.delete({ where: { id: documentId } }).catch(() => undefined);
+    throw error;
+  }
+}));
+
+app.post("/api/documents/:id/complete", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
+  const document = await prisma.projectDocument.findUnique({ where: { id: routeParam(req, "id") } });
+  if (!document || document.status !== ProjectDocumentStatus.PENDING_UPLOAD || document.uploadedById !== req.user!.id) return res.status(404).json({ error: { code: "DOCUMENT_NOT_FOUND", message: "Pending document upload was not found." } });
+  if (!(await projectAccess(req.user!, document.projectId, "UPDATE"))) return res.status(404).json({ error: { code: "DOCUMENT_NOT_FOUND", message: "Pending document upload was not found." } });
+  const { client, bucket } = getPrivateObjectStore();
+  const head = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: document.storageKey }));
+  if (Number(head.ContentLength || 0) !== document.sizeBytes || head.ContentType !== document.contentType || head.Metadata?.["sanora-document-id"] !== document.id || head.Metadata?.["sanora-uploader-id"] !== req.user!.id) {
+    return res.status(422).json({ error: { code: "DOCUMENT_UPLOAD_MISMATCH", message: "Uploaded file details do not match the authorised upload. Please retry the upload." } });
+  }
+  const updated = await prisma.$transaction(async tx => {
+    const saved = await tx.projectDocument.update({ where: { id: document.id, status: ProjectDocumentStatus.PENDING_UPLOAD }, data: { status: ProjectDocumentStatus.AVAILABLE, availableAt: new Date() } });
+    await audit(tx, req.user!.id, "PROJECT_DOCUMENT_UPLOADED", "ProjectDocument", saved.id, { projectId: saved.projectId, category: saved.category, sizeBytes: saved.sizeBytes });
+    return saved;
+  });
+  return res.json({ document: { id: updated.id, fileName: updated.originalName, status: updated.status, availableAt: updated.availableAt }, message: "Document uploaded and verified." });
+}));
+
+app.post("/api/documents/:id/download-url", authenticate, asyncRoute(async (req, res) => {
+  const document = await prisma.projectDocument.findUnique({ where: { id: routeParam(req, "id") } });
+  if (!document || document.status !== ProjectDocumentStatus.AVAILABLE) return res.status(404).json({ error: { code: "DOCUMENT_NOT_FOUND", message: "Document was not found." } });
+  if (!(await projectAccess(req.user!, document.projectId))) return res.status(404).json({ error: { code: "DOCUMENT_NOT_FOUND", message: "Document was not found." } });
+  if (req.user!.role === UserRole.CUSTOMER && !document.customerVisible) return res.status(404).json({ error: { code: "DOCUMENT_NOT_FOUND", message: "Document was not found." } });
+  const { client, bucket } = getPrivateObjectStore();
+  const downloadUrl = await getSignedUrl(client, new GetObjectCommand({
+    Bucket: bucket, Key: document.storageKey,
+    ResponseContentDisposition: "attachment; filename*=UTF-8''" + encodeURIComponent(document.originalName)
+  }), { expiresIn: 180 });
+  await prisma.auditLog.create({ data: { actorId: req.user!.id, action: "PROJECT_DOCUMENT_DOWNLOAD_LINK_CREATED", entityType: "ProjectDocument", entityId: document.id, metadata: { projectId: document.projectId } } });
+  return res.json({ downloadUrl, expiresInSeconds: 180 });
+}));
+
+app.post("/api/documents/:id/customer-visibility", authenticate, allow(UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER), asyncRoute(async (req, res) => {
+  const document = await prisma.projectDocument.findUnique({ where: { id: routeParam(req, "id") } });
+  if (!document || document.status !== ProjectDocumentStatus.AVAILABLE || !(await projectAccess(req.user!, document.projectId, "MANAGE"))) return res.status(404).json({ error: { code: "DOCUMENT_NOT_FOUND", message: "Document was not found." } });
+  const body = z.object({ customerVisible: z.boolean() }).parse(req.body);
+  const updated = await prisma.$transaction(async tx => {
+    const saved = await tx.projectDocument.update({ where: { id: document.id }, data: { customerVisible: body.customerVisible } });
+    await audit(tx, req.user!.id, "PROJECT_DOCUMENT_VISIBILITY_CHANGED", "ProjectDocument", saved.id, { projectId: saved.projectId, customerVisible: body.customerVisible });
+    return saved;
+  });
+  return res.json({ document: { id: updated.id, customerVisible: updated.customerVisible }, message: body.customerVisible ? "Document is now available to the customer." : "Document is now internal only." });
+}));
 
 app.listen(port, () => console.log(`Sanora API listening on :${port}`));
 process.on("SIGINT", async () => { await prisma.$disconnect(); process.exit(0); });

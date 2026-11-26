@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#14251f"><meta name="api-base-url" content="">
+<meta name="theme-color" content="#14251f"><meta name="api-base-url" content=""><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/assets/sanora-icon.svg" type="image/svg+xml">
 <title>Customer Project Portal | Sanora Spaces</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -12,7 +12,7 @@
 <main class="portal-shell">
   <header class="portal-brandbar">
     <a class="brand" href="index.html"><span class="brand-mark">S<span>•</span></span><span>SANORA<small>SPACES</small></span></a>
-    <span class="brand-tagline">Smart Spaces, Better Life.</span>
+    <span class="brand-tagline">Smart Spaces, Better Life.</span><button id="pwaInstallButton" class="pwa-install-button" type="button" hidden>Install app</button>
   </header>
 
   <section id="loginView" class="auth-screen" aria-labelledby="loginTitle">
@@ -153,5 +153,5 @@
     </div>
   </section>
 </main>
-<script src="portal.js"></script>
+<script src="pwa.js"></script><script src="portal.js"></script>
 </body></html>

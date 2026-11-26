@@ -60,10 +60,13 @@ const allowView = (...roles: UserRole[]) => (req: AuthedRequest, res: Response, 
 const staffRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER, UserRole.SALES, UserRole.SITE_ENGINEER, UserRole.PROCUREMENT, UserRole.FINANCE];
 const expenseRoles: UserRole[] = staffRoles.filter(role => role !== UserRole.SALES);
 const financeRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.FINANCE];
+const projectWideRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.FINANCE, UserRole.AUDITOR];
 const projectAccess = async (user: AuthUser, projectId: string) => {
-  if (user.role !== UserRole.CUSTOMER) return true;
-  const member = await prisma.projectMember.findFirst({ where: { projectId, userId: user.id } });
-  const project = await prisma.project.findFirst({ where: { id: projectId, customerId: user.id } });
+  if (projectWideRoles.includes(user.role)) return true;
+  const [member, project] = await Promise.all([
+    prisma.projectMember.findFirst({ where: { projectId, userId: user.id } }),
+    prisma.project.findFirst({ where: { id: projectId, OR: [{ customerId: user.id }, { createdById: user.id }] }, select: { id: true } })
+  ]);
   return Boolean(member || project);
 };
 const money = (v: Prisma.Decimal | number | string) => new Prisma.Decimal(v);
@@ -100,6 +103,7 @@ app.post("/api/projects", authenticate, allow(...staffRoles), asyncRoute(async (
   const project = await prisma.$transaction(async tx => {
     const p = await tx.project.create({ data: { ...body, code, createdById: req.user!.id } });
     await tx.projectMember.create({ data: { projectId: p.id, userId: body.customerId, access: "VIEW" } });
+    await tx.projectMember.create({ data: { projectId: p.id, userId: req.user!.id, access: "MANAGE" } });
     await audit(tx, req.user!.id, "PROJECT_CREATED", "Project", p.id, { code, customerId: body.customerId });
     return p;
   });
@@ -109,7 +113,7 @@ app.post("/api/projects", authenticate, allow(...staffRoles), asyncRoute(async (
 app.post("/api/projects/:id/status", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
   const body = z.object({ status: z.enum(["ENQUIRY","ESTIMATION","AWAITING_APPROVAL","PLANNING","IN_PROGRESS","ON_HOLD","HANDOVER","COMPLETED","CANCELLED"]) }).parse(req.body);
   const project = await prisma.project.findUnique({ where: { id: routeParam(req, "id") } });
-  if (!project) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  if (!project || !(await projectAccess(req.user!, project.id))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   validateProjectTransition(project.status, body.status, req.user!.id, true);
   const updated = await prisma.$transaction(async tx => {
     const p = await tx.project.update({ where: { id: project.id }, data: { status: body.status } });
@@ -136,7 +140,7 @@ const lineSchema = z.object({
 app.post("/api/projects/:id/estimates", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
   const body = z.object({ title: z.string().min(2).max(160), assumptions: z.string().max(4000).optional(), exclusions: z.string().max(4000).optional(), validUntil: z.string().datetime().optional(), lines: z.array(lineSchema).min(1).max(500) }).parse(req.body);
   const project = await prisma.project.findUnique({ where: { id: routeParam(req, "id") } });
-  if (!project) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  if (!project || !(await projectAccess(req.user!, project.id))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   const estimate = await prisma.$transaction(async tx => {
     const last = await tx.estimate.findFirst({ where: { projectId: project.id }, orderBy: { version: "desc" } });
     const created = await tx.estimate.create({ data: {
@@ -153,7 +157,8 @@ app.post("/api/projects/:id/estimates", authenticate, allow(...staffRoles), asyn
 }));
 app.post("/api/estimates/:id/submit", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
   const estimate = await prisma.estimate.findUnique({ where: { id: routeParam(req, "id") } });
-  if (!estimate || estimate.status !== EstimateStatus.DRAFT) return res.status(409).json({ error: { code: "ESTIMATE_NOT_DRAFT", message: "Only a draft estimate can be submitted." } });
+  if (!estimate || !(await projectAccess(req.user!, estimate.projectId))) return res.status(404).json({ error: { code: "ESTIMATE_NOT_FOUND", message: "Estimate was not found." } });
+  if (estimate.status !== EstimateStatus.DRAFT) return res.status(409).json({ error: { code: "ESTIMATE_NOT_DRAFT", message: "Only a draft estimate can be submitted." } });
   const updated = await prisma.$transaction(async tx => {
     const submitted = await tx.estimate.update({ where: { id: estimate.id }, data: { status: EstimateStatus.SUBMITTED } });
     await audit(tx, req.user!.id, "ESTIMATE_SUBMITTED", "Estimate", submitted.id, { projectId: submitted.projectId, version: submitted.version });
@@ -162,6 +167,8 @@ app.post("/api/estimates/:id/submit", authenticate, allow(...staffRoles), asyncR
   return res.json({ estimate: updated });
 }));
 app.post("/api/estimates/:id/approve", authenticate, allow(...financeRoles), asyncRoute(async (req, res) => {
+  const estimateForAccess = await prisma.estimate.findUnique({ where: { id: routeParam(req, "id") } });
+  if (!estimateForAccess || !(await projectAccess(req.user!, estimateForAccess.projectId))) return res.status(404).json({ error: { code: "ESTIMATE_NOT_FOUND", message: "Estimate was not found." } });
   const estimate = await prisma.$transaction(async tx => {
     const current = await tx.estimate.findUnique({ where: { id: routeParam(req, "id") } });
     if (!current || current.status !== EstimateStatus.SUBMITTED) throw Object.assign(new Error("Only a submitted estimate can be approved."), { status: 409, code: "ESTIMATE_NOT_SUBMITTED" });
@@ -221,6 +228,8 @@ app.post("/api/projects/:id/ledger", authenticate, asyncRoute(async (req, res) =
   return res.status(201).json({ entry, message: "Entry submitted. It will affect the project balance only after authorised verification and posting." });
 }));
 app.post("/api/ledger/:id/approve", authenticate, allow(...financeRoles), asyncRoute(async (req, res) => {
+  const entryForAccess = await prisma.ledgerEntry.findUnique({ where: { id: routeParam(req, "id") } });
+  if (!entryForAccess || !(await projectAccess(req.user!, entryForAccess.projectId))) return res.status(404).json({ error: { code: "LEDGER_ENTRY_NOT_FOUND", message: "Ledger entry was not found." } });
   const entry = await prisma.$transaction(async tx => {
     const current = await tx.ledgerEntry.findUnique({ where: { id: routeParam(req, "id") } });
     if (!current || current.status !== LedgerStatus.PENDING) throw Object.assign(new Error("This entry is not awaiting approval."), { status: 409, code: "LEDGER_NOT_PENDING" });
@@ -252,7 +261,9 @@ app.get("/api/projects/:id/ledger", authenticate, asyncRoute(async (req, res) =>
 }));
 app.post("/api/projects/:id/commitments", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
   const body = z.object({ description: z.string().min(3).max(300), vendor: z.string().max(180).optional(), amount: z.number().positive(), reference: z.string().max(120).optional() }).parse(req.body);
-  const commitment = await prisma.commitment.create({ data: { projectId: routeParam(req, "id"), ...body, amount: money(body.amount) } });
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const commitment = await prisma.commitment.create({ data: { projectId, ...body, amount: money(body.amount) } });
   return res.status(201).json({ commitment });
 }));
 
@@ -293,7 +304,7 @@ app.post("/api/projects/:id/purchase-orders", authenticate, allow(UserRole.SUPER
   const body = z.object({ vendorId: z.string().uuid(), notes: z.string().max(2000).optional(), lines: z.array(purchaseOrderLineSchema).min(1).max(200) }).parse(req.body);
   const projectId = routeParam(req, "id");
   const project = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } });
-  if (!project) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  if (!project || !(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   const vendor = await prisma.vendor.findFirst({ where: { id: body.vendorId, active: true } });
   if (!vendor) return res.status(404).json({ error: { code: "VENDOR_NOT_FOUND", message: "Select an active vendor." } });
   const subtotal = body.lines.reduce((sum, line) => sum.plus(money(line.quantity).mul(money(line.unitRate))), new Prisma.Decimal(0));
@@ -311,7 +322,8 @@ app.post("/api/projects/:id/purchase-orders", authenticate, allow(UserRole.SUPER
 }));
 app.post("/api/purchase-orders/:id/submit", authenticate, allow(UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER, UserRole.PROCUREMENT), asyncRoute(async (req, res) => {
   const po = await prisma.purchaseOrder.findUnique({ where: { id: routeParam(req, "id") } });
-  if (!po || po.status !== PurchaseOrderStatus.DRAFT) return res.status(409).json({ error: { code: "PURCHASE_ORDER_NOT_DRAFT", message: "Only a draft purchase order can be submitted." } });
+  if (!po || !(await projectAccess(req.user!, po.projectId))) return res.status(404).json({ error: { code: "PURCHASE_ORDER_NOT_FOUND", message: "Purchase order was not found." } });
+  if (po.status !== PurchaseOrderStatus.DRAFT) return res.status(409).json({ error: { code: "PURCHASE_ORDER_NOT_DRAFT", message: "Only a draft purchase order can be submitted." } });
   const updated = await prisma.$transaction(async tx => {
     const value = await tx.purchaseOrder.update({ where: { id: po.id }, data: { status: PurchaseOrderStatus.SUBMITTED } });
     await audit(tx, req.user!.id, "PURCHASE_ORDER_SUBMITTED", "PurchaseOrder", po.id, { orderNumber: po.orderNumber });
@@ -321,7 +333,8 @@ app.post("/api/purchase-orders/:id/submit", authenticate, allow(UserRole.SUPER_A
 }));
 app.post("/api/purchase-orders/:id/approve", authenticate, allow(...financeRoles), asyncRoute(async (req, res) => {
   const po = await prisma.purchaseOrder.findUnique({ where: { id: routeParam(req, "id") } });
-  if (!po || po.status !== PurchaseOrderStatus.SUBMITTED) return res.status(409).json({ error: { code: "PURCHASE_ORDER_NOT_SUBMITTED", message: "Only a submitted purchase order can be approved." } });
+  if (!po || !(await projectAccess(req.user!, po.projectId))) return res.status(404).json({ error: { code: "PURCHASE_ORDER_NOT_FOUND", message: "Purchase order was not found." } });
+  if (po.status !== PurchaseOrderStatus.SUBMITTED) return res.status(409).json({ error: { code: "PURCHASE_ORDER_NOT_SUBMITTED", message: "Only a submitted purchase order can be approved." } });
   const updated = await prisma.$transaction(async tx => {
     const value = await tx.purchaseOrder.update({ where: { id: po.id }, data: { status: PurchaseOrderStatus.APPROVED, approvedById: req.user!.id, approvedAt: new Date() } });
     await audit(tx, req.user!.id, "PURCHASE_ORDER_APPROVED", "PurchaseOrder", po.id, { orderNumber: po.orderNumber, subtotal: po.subtotal.toString() });
@@ -338,9 +351,11 @@ app.post("/api/purchase-orders/:id/receipts", authenticate, allow(...staffRoles)
     lines: z.array(z.object({ lineId: z.string().uuid(), receivedQty: z.number().positive().max(1_000_000) })).min(1).max(200)
   }).parse(req.body);
   const poId = routeParam(req, "id");
+  const poForAccess = await prisma.purchaseOrder.findUnique({ where: { id: poId }, select: { projectId: true } });
+  if (!poForAccess || !(await projectAccess(req.user!, poForAccess.projectId))) return res.status(404).json({ error: { code: "PURCHASE_ORDER_NOT_FOUND", message: "Purchase order was not found." } });
   const result = await prisma.$transaction(async tx => {
     const po = await tx.purchaseOrder.findUnique({ where: { id: poId }, include: { lines: true } });
-    if (!po || (po.status === PurchaseOrderStatus.APPROVED || po.status === PurchaseOrderStatus.PARTIALLY_RECEIVED)) throw Object.assign(new Error("Material can only be received against an approved purchase order."), { status: 409, code: "PURCHASE_ORDER_NOT_APPROVED" });
+    if (!po || (po.status !== PurchaseOrderStatus.APPROVED && po.status !== PurchaseOrderStatus.PARTIALLY_RECEIVED)) throw Object.assign(new Error("Material can only be received against an approved purchase order."), { status: 409, code: "PURCHASE_ORDER_NOT_APPROVED" });
     const lineMap = new Map(po.lines.map(line => [line.id, line]));
     for (const received of body.lines) {
       const line = lineMap.get(received.lineId);
@@ -381,7 +396,7 @@ app.post("/api/projects/:id/labour", authenticate, allow(...staffRoles), asyncRo
   }).parse(req.body);
   const projectId = routeParam(req, "id");
   const project = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } });
-  if (!project) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  if (!project || !(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   const amount = money(body.quantity).mul(money(body.rate));
   const record = await prisma.$transaction(async tx => {
     const labour = await tx.labourRecord.create({ data: {
@@ -395,6 +410,8 @@ app.post("/api/projects/:id/labour", authenticate, allow(...staffRoles), asyncRo
   return res.status(201).json({ labourRecord: record, message: "Labour record submitted for supervisor and finance review. It has not been charged to the project ledger." });
 }));
 app.post("/api/labour/:id/approve", authenticate, allow(...financeRoles), asyncRoute(async (req, res) => {
+  const recordForAccess = await prisma.labourRecord.findUnique({ where: { id: routeParam(req, "id") } });
+  if (!recordForAccess || !(await projectAccess(req.user!, recordForAccess.projectId))) return res.status(404).json({ error: { code: "LABOUR_RECORD_NOT_FOUND", message: "Labour record was not found." } });
   const record = await prisma.$transaction(async tx => {
     const current = await tx.labourRecord.findUnique({ where: { id: routeParam(req, "id") } });
     if (!current || current.status !== LabourRecordStatus.SUBMITTED) throw Object.assign(new Error("Only submitted labour records can be approved."), { status: 409, code: "LABOUR_RECORD_NOT_SUBMITTED" });

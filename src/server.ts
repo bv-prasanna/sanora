@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { calculateProjectBalance, type PostedLedgerLine } from "./domain/ledger-balance.js";
-import { hasSanoraPermission, redactAuditMetadata, estimateProjectTotal, validateProjectTransition } from "./skeleton/policies.mjs";
+import { hasSanoraPermission, redactAuditMetadata, estimateProjectTotal, validateProjectTransition, validateTaskTransition } from "./skeleton/policies.mjs";
 
 const prisma = new PrismaClient();
 const app = express();
@@ -878,6 +878,10 @@ app.patch("/api/tasks/:id", authenticate, allow(...planningRoles), asyncRoute(as
   if (body.customerVisible !== undefined && !(await projectAccess(req.user!, current.projectId, "MANAGE"))) return res.status(403).json({ error: { code: "TASK_VISIBILITY_REQUIRES_MANAGER", message: "Only a project manager can change customer visibility." } });
   if (body.assignedToId && !(await validateTaskAssignee(current.projectId, body.assignedToId))) return res.status(400).json({ error: { code: "INVALID_TASK_ASSIGNEE", message: "Assignee must be an active staff member assigned to this project." } });
   const nextStatus = body.status || current.status;
+  if (body.status && body.status !== current.status) {
+    try { validateTaskTransition(current.status, body.status, req.user!.id, true); }
+    catch { return res.status(409).json({ error: { code: "INVALID_TASK_TRANSITION", message: "This task cannot move from " + current.status + " to " + body.status + "." } }); }
+  }
   if ([ProjectTaskStatus.IN_PROGRESS, ProjectTaskStatus.IN_REVIEW, ProjectTaskStatus.COMPLETED].includes(nextStatus)) {
     const incomplete = current.blockedBy.filter(link => link.predecessor.status !== ProjectTaskStatus.COMPLETED && link.predecessor.status !== ProjectTaskStatus.CANCELLED);
     if (incomplete.length) return res.status(409).json({ error: { code: "TASK_DEPENDENCIES_INCOMPLETE", message: "Complete prerequisite tasks before starting, reviewing or completing this task.", blockers: incomplete.map(link => ({ id: link.predecessor.id, title: link.predecessor.title })) } });

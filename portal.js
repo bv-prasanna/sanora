@@ -150,7 +150,7 @@
       const line = window.document.createElement("div"); line.className = "document-row";
       const info = window.document.createElement("div");
       const name = window.document.createElement("b"); name.textContent = document.originalName;
-      const meta = window.document.createElement("small"); meta.textContent = titleCase(document.category) + " · " + date(document.availableAt || document.createdAt) + " · " + Math.max(1, Math.round(document.sizeBytes / 1024)) + " KB";
+      const meta = window.document.createElement("small"); meta.textContent = titleCase(document.category) + " · " + date(document.availableAt || document.createdAt) + " · " + Math.max(1, Math.round(document.sizeBytes / 1024)) + " KB" + (document.uploadedBy?.name ? " · " + document.uploadedBy.name : "") + (currentUser?.role === "CUSTOMER" ? "" : document.customerVisible ? " · Customer visible" : " · Internal");
       info.append(name, meta);
       const link = window.document.createElement("button"); link.type = "button"; link.textContent = "Download";
       link.addEventListener("click", async () => {
@@ -159,7 +159,19 @@
         catch (error) { message("#dashboardMessage", error.message, "error"); }
         finally { link.disabled = false; link.textContent = "Download"; }
       });
-      line.append(info, link); container.append(line);
+      line.append(info, link);
+      if (["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER"].includes(currentUser?.role)) {
+        const visibility = window.document.createElement("button"); visibility.type = "button"; visibility.className = "task-action"; visibility.textContent = document.customerVisible ? "Make internal" : "Publish";
+        visibility.addEventListener("click", async () => {
+          visibility.disabled = true;
+          try {
+            const result = await api("/documents/" + encodeURIComponent(document.id) + "/customer-visibility", { method: "POST", body: JSON.stringify({ customerVisible: !document.customerVisible }) });
+            message("#dashboardMessage", result.message, "info"); await renderDocuments(projectId);
+          } catch (error) { message("#dashboardMessage", error.message, "error"); visibility.disabled = false; }
+        });
+        line.append(visibility);
+      }
+      container.append(line);
     });
   }
   function populateVendorSelect(vendors) {
@@ -532,6 +544,8 @@
     $("#labourCreatePanel").hidden = !labourRole;
     $("#staffOperationsForms").hidden = !procurementRole && !estimateRole && !labourRole;
     $("#siteUpdateForm").hidden = !planningRole;
+    const documentUploadRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "PROCUREMENT", "SITE_ENGINEER", "FINANCE"].includes(currentUser?.role);
+    $("#documentUploadForm").hidden = !documentUploadRole;
     $("#siteUpdateVisibilityLabel").hidden = !managerRole;
     $("#milestoneVisibilityLabel").hidden = !managerRole;
     $("#taskVisibilityLabel").hidden = !managerRole;
@@ -612,6 +626,32 @@
       message("#statementMessage", "Project statement downloaded.", "info");
     } catch (error) { message("#statementMessage", error.message, "error"); }
     finally { button.disabled = false; button.textContent = "Download project statement (CSV)"; }
+  });
+  $("#documentUploadForm").addEventListener("submit", async event => {
+    event.preventDefault(); if (!activeProjectId) return;
+    const formElement = event.currentTarget; const form = new FormData(formElement);
+    const file = $("#documentFile").files?.[0];
+    if (!file) return message("#documentUploadMessage", "Choose a file to upload.", "error");
+    if (file.size < 1 || file.size > 15 * 1024 * 1024) return message("#documentUploadMessage", "File size must be between 1 byte and 15 MiB.", "error");
+    const allowedTypes = ["application/pdf", "image/jpeg", "image/png", "image/webp", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"];
+    if (!allowedTypes.includes(file.type)) return message("#documentUploadMessage", "This file type is not supported.", "error");
+    const button = $("#documentUploadButton"); button.disabled = true; button.textContent = "Uploading…";
+    try {
+      const ticket = await api("/projects/" + encodeURIComponent(activeProjectId) + "/documents/upload-url", {
+        method: "POST",
+        body: JSON.stringify({
+          fileName: file.name, contentType: file.type, sizeBytes: file.size,
+          category: form.get("category"), description: form.get("description") || undefined,
+          customerVisible: $("#documentCustomerVisible").checked
+        })
+      });
+      const response = await fetch(ticket.uploadUrl, { method: ticket.method, headers: ticket.requiredHeaders, body: file });
+      if (!response.ok) throw new Error("The file upload did not complete. Please retry.");
+      const completed = await api("/documents/" + encodeURIComponent(ticket.document.id) + "/complete", { method: "POST", body: "{}" });
+      message("#documentUploadMessage", completed.message || "Document uploaded and verified.", "info");
+      formElement.reset(); await renderDocuments(activeProjectId);
+    } catch (error) { message("#documentUploadMessage", error.message, "error"); }
+    finally { button.disabled = false; button.textContent = "Upload document"; }
   });
   $("#siteUpdateForm").addEventListener("submit", async event => {
     event.preventDefault();

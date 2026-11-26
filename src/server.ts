@@ -30,7 +30,7 @@ const asyncRoute = (fn: (req: AuthedRequest, res: Response) => Promise<unknown>)
   (req: Request, res: Response, next: NextFunction) => Promise.resolve(fn(req as AuthedRequest, res)).catch(next);
 
 async function authenticate(req: AuthedRequest, res: Response, next: NextFunction) {
-  const token = req.headers.authorization?.replace(/^Bearer\\s+/i, "");
+  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
   if (!token) return res.status(401).json({ error: { code: "AUTH_REQUIRED", message: "Please sign in to continue." } });
   let claims: jwt.JwtPayload;
   try {

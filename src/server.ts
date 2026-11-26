@@ -743,6 +743,7 @@ async function validateTaskAssignee(projectId: string, userId: string) {
 app.get("/api/projects/:id/members", authenticate, asyncRoute(async (req, res) => {
   const projectId = routeParam(req, "id");
   if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  if (!planningRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "STAFF_DIRECTORY_RESTRICTED", message: "Only assigned project staff can view the project assignment list." } });
   const [project, memberships] = await Promise.all([
     prisma.project.findUnique({ where: { id: projectId }, include: { createdBy: { select: { id: true, name: true, role: true, active: true } } } }),
     prisma.projectMember.findMany({ where: { projectId, user: { active: true, role: { not: UserRole.CUSTOMER } } }, include: { user: { select: { id: true, name: true, role: true } } } })
@@ -760,14 +761,14 @@ app.get("/api/projects/:id/work-plan", authenticate, asyncRoute(async (req, res)
     prisma.projectMilestone.findMany({
       where: { projectId, ...(customer ? { customerVisible: true } : {}) },
       orderBy: [{ sequence: "asc" }, { targetDate: "asc" }],
-      include: { _count: { select: { tasks: true } } }
+      include: { _count: { select: { tasks: customer ? { where: { customerVisible: true } } : true } } }
     }),
     prisma.projectTask.findMany({
       where: { projectId, ...(customer ? { customerVisible: true } : {}) },
       orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }],
       include: {
         assignedTo: { select: { id: true, name: true, role: true } },
-        blockedBy: { include: { predecessor: { select: { id: true, title: true, status: true } } } }
+        ...(customer ? {} : { blockedBy: { include: { predecessor: { select: { id: true, title: true, status: true } } } } })
       }
     })
   ]);

@@ -1149,6 +1149,14 @@ app.patch("/api/tasks/:id", authenticate, allow(...planningRoles), asyncRoute(as
       completedAt: nextStatus === ProjectTaskStatus.COMPLETED ? new Date() : body.status ? null : undefined
     } });
     await audit(tx, req.user!.id, "PROJECT_TASK_UPDATED", "ProjectTask", id, { projectId: current.projectId, changes: Object.keys(body), status: nextStatus, progressPercent });
+    if (body.status && body.status !== current.status) {
+      const recipients = new Set([current.createdById, current.assignedToId].filter((value): value is string => Boolean(value) && value !== req.user!.id));
+      for (const recipientId of recipients) await notify(tx, {
+        recipientId, actorId: req.user!.id, projectId: current.projectId, type: NotificationType.TASK_UPDATED,
+        title: "Project task updated", message: saved.title + " is now " + nextStatus.toLowerCase().replace(/_/g, " ") + ".",
+        entityType: "ProjectTask", entityId: saved.id
+      });
+    }
     if (body.assignedToId && body.assignedToId !== current.assignedToId && body.assignedToId !== req.user!.id) await notify(tx, {
       recipientId: body.assignedToId, actorId: req.user!.id, projectId: current.projectId, type: NotificationType.TASK_ASSIGNED,
       title: "Project task assigned to you", message: "You have been assigned: " + saved.title,

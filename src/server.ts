@@ -104,7 +104,8 @@ const documentUploadSchema = z.object({
   sizeBytes: z.number().int().positive().max(documentMaxBytes),
   category: z.nativeEnum(ProjectDocumentCategory).default(ProjectDocumentCategory.OTHER),
   description: z.string().max(500).optional(),
-  projectUpdateId: z.string().uuid().optional()
+  projectUpdateId: z.string().uuid().optional(),
+  customerVisible: z.boolean().default(false)
 });
 const safeFileName = (name: string) => name.replace(/[\/\\\u0000-\u001f\u007f]/g, "_").replace(/\s+/g, " ").trim().slice(0, 180) || "document";
 
@@ -659,6 +660,7 @@ app.post("/api/projects/:id/documents/upload-url", authenticate, allow(...staffR
   const projectId = routeParam(req, "id");
   if (!(await projectAccess(req.user!, projectId, "UPDATE"))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   const body = documentUploadSchema.parse(req.body);
+  if (body.customerVisible && !(await projectAccess(req.user!, projectId, "MANAGE"))) return res.status(403).json({ error: { code: "DOCUMENT_VISIBILITY_REQUIRES_MANAGER", message: "Only a project manager can publish documents to the customer portal." } });
   if (body.projectUpdateId) {
     const update = await prisma.projectUpdate.findFirst({ where: { id: body.projectUpdateId, projectId }, select: { id: true } });
     if (!update || body.category !== ProjectDocumentCategory.SITE_PHOTO) return res.status(400).json({ error: { code: "INVALID_SITE_PHOTO_LINK", message: "Site photos must be attached to a site update in the same project." } });
@@ -670,7 +672,7 @@ app.post("/api/projects/:id/documents/upload-url", authenticate, allow(...staffR
   const documentId = randomUUID();
   const storageKey = "projects/" + projectId + "/documents/" + documentId;
   const document = await prisma.projectDocument.create({
-    data: { id: documentId, projectId, projectUpdateId: body.projectUpdateId, uploadedById: req.user!.id, category: body.category, originalName: safeFileName(body.fileName), storageKey, contentType: body.contentType, sizeBytes: body.sizeBytes, description: body.description }
+    data: { id: documentId, projectId, projectUpdateId: body.projectUpdateId, uploadedById: req.user!.id, category: body.category, originalName: safeFileName(body.fileName), storageKey, contentType: body.contentType, sizeBytes: body.sizeBytes, description: body.description, customerVisible: body.customerVisible }
   });
   try {
     const command = new PutObjectCommand({

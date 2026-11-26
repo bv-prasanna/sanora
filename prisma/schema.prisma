@@ -577,6 +577,7 @@ model CustomerInvitation {
   tokenHash   String   @unique
   expiresAt   DateTime
   acceptedAt  DateTime?
+  revokedAt   DateTime?
   createdAt   DateTime @default(now())
   user        User     @relation("InvitationUser", fields: [userId], references: [id], onDelete: Cascade)
   invitedBy   User     @relation("InvitationInviter", fields: [invitedById], references: [id])

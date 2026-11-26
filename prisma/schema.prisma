@@ -1,0 +1,199 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  DIRECTOR
+  CORPORATE_OPS
+  BRANCH_MANAGER
+  BRANCH_PARTNER
+  SALES
+  SITE_ENGINEER
+  PROCUREMENT
+  FINANCE
+  CUSTOMER
+  AUDITOR
+}
+
+enum ProjectStatus {
+  ENQUIRY
+  ESTIMATION
+  AWAITING_APPROVAL
+  PLANNING
+  IN_PROGRESS
+  ON_HOLD
+  HANDOVER
+  COMPLETED
+  CANCELLED
+}
+
+enum EstimateStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  SUPERSEDED
+  REJECTED
+}
+
+enum LedgerType {
+  TOP_UP
+  MATERIAL_EXPENSE
+  LABOUR_EXPENSE
+  OTHER_EXPENSE
+  REFUND
+  REVERSAL
+}
+
+enum LedgerStatus {
+  PENDING
+  APPROVED
+  POSTED
+  REJECTED
+  REVERSED
+}
+
+enum CommitmentStatus {
+  OPEN
+  PARTIALLY_FULFILLED
+  FULFILLED
+  CANCELLED
+}
+
+model User {
+  id           String          @id @default(uuid())
+  name         String
+  email        String          @unique
+  passwordHash String
+  role         UserRole        @default(CUSTOMER)
+  active       Boolean         @default(true)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  createdProjects Project[]    @relation("ProjectCreator")
+  memberships  ProjectMember[]
+  auditLogs    AuditLog[]
+  ledgerEntries LedgerEntry[]  @relation("LedgerActor")
+}
+
+model Project {
+  id          String          @id @default(uuid())
+  code        String          @unique
+  name        String
+  location    String?
+  description String?
+  status      ProjectStatus   @default(ENQUIRY)
+  customerId  String
+  createdById String
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  customer    User            @relation("ProjectCustomer", fields: [customerId], references: [id])
+  createdBy   User            @relation("ProjectCreator", fields: [createdById], references: [id])
+  members     ProjectMember[]
+  estimates   Estimate[]
+  ledger      LedgerEntry[]
+  commitments Commitment[]
+  @@index([customerId, status])
+}
+
+model ProjectMember {
+  id        String   @id @default(uuid())
+  projectId String
+  userId    String
+  access    String   @default("VIEW")
+  createdAt DateTime @default(now())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([projectId, userId])
+}
+
+model Estimate {
+  id          String         @id @default(uuid())
+  projectId   String
+  version     Int
+  status      EstimateStatus @default(DRAFT)
+  title       String
+  assumptions String?
+  exclusions  String?
+  validUntil  DateTime?
+  createdById String
+  createdAt   DateTime       @default(now())
+  approvedAt  DateTime?
+  project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  lines       EstimateLine[]
+  @@unique([projectId, version])
+  @@index([projectId, status])
+}
+
+model EstimateLine {
+  id          String   @id @default(uuid())
+  estimateId  String
+  category    String
+  description String
+  specification String?
+  quantity    Decimal  @db.Decimal(14, 3)
+  unit        String
+  unitRate    Decimal  @db.Decimal(14, 2)
+  createdAt   DateTime @default(now())
+  estimate    Estimate @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+}
+
+model LedgerEntry {
+  id             String       @id @default(uuid())
+  projectId      String
+  type           LedgerType
+  status         LedgerStatus @default(PENDING)
+  amount         Decimal      @db.Decimal(14, 2)
+  description    String
+  reference      String?
+  vendorOrWorker String?
+  quantity       Decimal?     @db.Decimal(14, 3)
+  unit           String?
+  unitRate       Decimal?     @db.Decimal(14, 2)
+  invoiceNumber  String?
+  evidenceUrl    String?
+  idempotencyKey String       @unique
+  createdById    String
+  approvedById   String?
+  createdAt      DateTime     @default(now())
+  approvedAt     DateTime?
+  postedAt       DateTime?
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy      User         @relation("LedgerActor", fields: [createdById], references: [id])
+  @@index([projectId, status, type])
+}
+
+model Commitment {
+  id          String           @id @default(uuid())
+  projectId   String
+  description String
+  vendor      String?
+  amount      Decimal          @db.Decimal(14, 2)
+  fulfilledAmount Decimal      @default(0) @db.Decimal(14, 2)
+  status      CommitmentStatus @default(OPEN)
+  reference   String?
+  createdAt   DateTime         @default(now())
+  project     Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@index([projectId, status])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  actor      User     @relation(fields: [actorId], references: [id])
+  @@index([entityType, entityId, createdAt])
+}
+
+model CustomerProjectRelation {
+  id String @id @default(uuid())
+  // Reserved for future customer-specific relationship metadata.
+}

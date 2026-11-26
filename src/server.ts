@@ -105,7 +105,7 @@ const documentUploadSchema = z.object({
   category: z.nativeEnum(ProjectDocumentCategory).default(ProjectDocumentCategory.OTHER),
   description: z.string().max(500).optional()
 });
-const safeFileName = (name: string) => name.replace(/[\\/\\\\\\u0000-\\u001f\\u007f]/g, "_").replace(/\\s+/g, " ").trim().slice(0, 180) || "document";
+const safeFileName = (name: string) => name.replace(/[\/\\\u0000-\u001f\u007f]/g, "_").replace(/\s+/g, " ").trim().slice(0, 180) || "document";
 
 const money = (v: Prisma.Decimal | number | string) => new Prisma.Decimal(v);
 const audit = (tx: Prisma.TransactionClient, actorId: string, action: string, entityType: string, entityId: string, metadata?: Prisma.InputJsonValue) =>
@@ -580,7 +580,7 @@ app.post("/api/projects/:id/documents/upload-url", authenticate, allow(...staffR
     });
     const uploadUrl = await getSignedUrl(client, command, { expiresIn: 300 });
     await prisma.auditLog.create({ data: { actorId: req.user!.id, action: "PROJECT_DOCUMENT_UPLOAD_REQUESTED", entityType: "ProjectDocument", entityId: documentId, metadata: { projectId, category: body.category, sizeBytes: body.sizeBytes } } });
-    return res.status(201).json({ document: { id: document.id, fileName: document.originalName, contentType: document.contentType, sizeBytes: document.sizeBytes }, uploadUrl, method: "PUT", requiredHeaders: { "Content-Type": body.contentType }, expiresInSeconds: 300, message: "Upload URL created. Upload the file, then confirm completion." });
+    return res.status(201).json({ document: { id: document.id, fileName: document.originalName, contentType: document.contentType, sizeBytes: document.sizeBytes }, uploadUrl, method: "PUT", requiredHeaders: { "Content-Type": body.contentType, "x-amz-meta-sanora-document-id": documentId, "x-amz-meta-sanora-project-id": projectId, "x-amz-meta-sanora-uploader-id": req.user!.id }, expiresInSeconds: 300, message: "Upload URL created. Upload the file, then confirm completion." });
   } catch (error) {
     await prisma.projectDocument.delete({ where: { id: documentId } }).catch(() => undefined);
     throw error;

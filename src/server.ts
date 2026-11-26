@@ -649,7 +649,7 @@ app.get("/api/projects/:id/documents", authenticate, asyncRoute(async (req, res)
   if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   const customer = req.user!.role === UserRole.CUSTOMER;
   const documents = await prisma.projectDocument.findMany({
-    where: { projectId, status: ProjectDocumentStatus.AVAILABLE, ...(customer ? { customerVisible: true } : {}) },
+    where: { projectId, status: ProjectDocumentStatus.AVAILABLE, ...(customer ? { customerVisible: true, OR: [{ projectUpdateId: null }, { projectUpdate: { is: { customerVisible: true } } }] } : {}) },
     select: { id: true, category: true, originalName: true, contentType: true, sizeBytes: true, description: true, customerVisible: true, createdAt: true, availableAt: true, uploadedBy: { select: { name: true } } },
     orderBy: { createdAt: "desc" }, take: 100
   });
@@ -707,10 +707,10 @@ app.post("/api/documents/:id/complete", authenticate, allow(...staffRoles), asyn
 
 app.post("/api/documents/:id/download-url", authenticate, asyncRoute(async (req, res) => {
   const body = z.object({ inline: z.boolean().optional() }).parse(req.body || {});
-  const document = await prisma.projectDocument.findUnique({ where: { id: routeParam(req, "id") } });
+  const document = await prisma.projectDocument.findUnique({ where: { id: routeParam(req, "id") }, include: { projectUpdate: { select: { customerVisible: true } } } });
   if (!document || document.status !== ProjectDocumentStatus.AVAILABLE) return res.status(404).json({ error: { code: "DOCUMENT_NOT_FOUND", message: "Document was not found." } });
   if (!(await projectAccess(req.user!, document.projectId))) return res.status(404).json({ error: { code: "DOCUMENT_NOT_FOUND", message: "Document was not found." } });
-  if (req.user!.role === UserRole.CUSTOMER && !document.customerVisible) return res.status(404).json({ error: { code: "DOCUMENT_NOT_FOUND", message: "Document was not found." } });
+  if (req.user!.role === UserRole.CUSTOMER && (!document.customerVisible || (document.projectUpdateId && !document.projectUpdate?.customerVisible))) return res.status(404).json({ error: { code: "DOCUMENT_NOT_FOUND", message: "Document was not found." } });
   const { client, bucket } = getPrivateObjectStore();
   const downloadUrl = await getSignedUrl(client, new GetObjectCommand({
     Bucket: bucket, Key: document.storageKey,

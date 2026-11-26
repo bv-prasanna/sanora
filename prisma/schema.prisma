@@ -404,6 +404,7 @@ model TopUpRequest {
   requestedBy    User               @relation("TopUpRequester", fields: [requestedById], references: [id])
   reviewedBy     User?              @relation("TopUpReviewer", fields: [reviewedById], references: [id])
   ledgerEntry    LedgerEntry?       @relation(fields: [ledgerEntryId], references: [id])
+  @@unique([projectId, reference])
   @@index([projectId, status, submittedAt])
   @@index([requestedById, status])
 }

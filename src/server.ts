@@ -301,12 +301,12 @@ async function buildProjectStatement(projectId: string, user: AuthUser) {
         estimates: { where: { status: EstimateStatus.APPROVED }, orderBy: { version: "desc" }, take: 1, include: { lines: true } }
       }
     }),
-    prisma.ledgerEntry.findMany({ where: { projectId, status: LedgerStatus.POSTED }, orderBy: { postedAt: "desc" }, take: 1000 }),
+    prisma.ledgerEntry.findMany({ where: { projectId, status: LedgerStatus.POSTED }, orderBy: { postedAt: "desc" } }),
     prisma.commitment.findMany({ where: { projectId, status: { in: ["OPEN", "PARTIALLY_FULFILLED"] } } }),
     prisma.topUpRequest.findMany({
       where: { projectId, ...(customer ? { requestedById: user.id } : {}) },
       select: { amount: true, paymentMode: true, reference: true, status: true, submittedAt: true, reviewedAt: true, reviewReason: true },
-      orderBy: { submittedAt: "desc" }, take: 500
+      orderBy: { submittedAt: "desc" }
     })
   ]);
   if (!project) return null;

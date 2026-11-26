@@ -60,6 +60,7 @@
       message("#dashboardMessage", result.message || successMessage, "info");
       await loadProject(activeProjectId);
       await loadOperationsSummary().catch(() => undefined);
+      await loadNotifications().catch(() => undefined);
     } catch (error) { message("#dashboardMessage", error.message, "error"); }
   }
   function renderFinanceQueue(queue) {
@@ -322,6 +323,32 @@
     populatePlanningForms(members.members || [], workPlan.milestones || []);
     renderProject(projectResult.project, ledger, orders, labour, updates, workPlan, financeQueue, statementResult.statement);
   }
+  async function loadNotifications() {
+    const result = await api("/notifications");
+    const count = Number(result.unreadCount || 0);
+    const countNode = $("#notificationCount"); countNode.textContent = count > 99 ? "99+" : String(count); countNode.hidden = count === 0;
+    const container = $("#notificationList"); container.replaceChildren();
+    if (!result.notifications?.length) return empty(container, "You're all caught up. New assignments and project updates will appear here.");
+    result.notifications.forEach(notification => {
+      const item = window.document.createElement("article"); item.className = "notification-item" + (notification.readAt ? "" : " unread");
+      const heading = window.document.createElement("b"); heading.textContent = notification.title;
+      const body = window.document.createElement("p"); body.textContent = notification.message;
+      const meta = window.document.createElement("small"); meta.textContent = [notification.project?.code, date(notification.createdAt)].filter(Boolean).join(" · ");
+      item.append(heading, body, meta);
+      const action = window.document.createElement("button"); action.type = "button"; action.textContent = notification.projectId ? "Open project" : notification.readAt ? "Read" : "Mark read";
+      action.addEventListener("click", async () => {
+        try {
+          if (!notification.readAt) await api("/notifications/" + encodeURIComponent(notification.id) + "/read", { method: "POST", body: "{}" });
+          if (notification.projectId) {
+            $("#notificationPanel").hidden = true; $("#notificationButton").setAttribute("aria-expanded", "false");
+            $("#projectSelect").value = notification.projectId; await loadProject(notification.projectId);
+            $("#overview").scrollIntoView({ behavior: "smooth", block: "start" });
+          } else await loadNotifications();
+        } catch (error) { message("#dashboardMessage", error.message, "error"); }
+      });
+      item.append(action); container.append(item);
+    });
+  }
   async function loadOperationsSummary() {
     const result = await api("/operations/summary");
     const metrics = [
@@ -379,10 +406,12 @@
     try {
       await loadProjects();
       if (currentUser?.role !== "CUSTOMER") await loadOperationsSummary();
+      await loadNotifications();
     } catch (error) { message("#dashboardMessage", error.message, "error"); }
   }
   function signOut(showMessage = true) {
     token = null; currentUser = null; sessionStorage.removeItem(tokenKey);
+    $("#notificationPanel").hidden = true;
     show("login");
     if (showMessage) message("#loginMessage", "You have signed out securely.", "info");
   }
@@ -413,6 +442,21 @@
     }, error => {
       message("#siteUpdateMessage", error.code === 1 ? "Location permission was denied. You can enter coordinates manually." : "Unable to get your location. Try again or enter coordinates manually.", "error");
     }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 });
+  });
+  $("#notificationButton").addEventListener("click", async () => {
+    const panel = $("#notificationPanel");
+    panel.hidden = !panel.hidden;
+    $("#notificationButton").setAttribute("aria-expanded", String(!panel.hidden));
+    if (!panel.hidden) {
+      try { await loadNotifications(); }
+      catch (error) { empty($("#notificationList"), error.message); }
+    }
+  });
+  $("#markAllNotificationsRead").addEventListener("click", async () => {
+    try {
+      await api("/notifications/read-all", { method: "POST", body: "{}" });
+      await loadNotifications();
+    } catch (error) { message("#dashboardMessage", error.message, "error"); }
   });
   $("#downloadStatementButton").addEventListener("click", async () => {
     if (!activeProjectId || !token) return;

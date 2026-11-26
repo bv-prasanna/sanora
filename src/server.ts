@@ -5,7 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { Prisma, PrismaClient, UserRole, ProjectStatus, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory, ProjectDocumentCategory, ProjectDocumentStatus, TopUpRequestStatus, ProjectMilestoneStatus, ProjectTaskStatus, ProjectTaskPriority } from "@prisma/client";
+import { Prisma, PrismaClient, UserRole, ProjectStatus, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory, ProjectDocumentCategory, ProjectDocumentStatus, TopUpRequestStatus, ProjectMilestoneStatus, ProjectTaskStatus, ProjectTaskPriority, NotificationType } from "@prisma/client";
 import { z, ZodError } from "zod";
 import { randomUUID } from "node:crypto";
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
@@ -113,6 +113,12 @@ const safeFileName = (name: string) => name.replace(/[\/\\\u0000-\u001f\u007f]/g
 const money = (v: Prisma.Decimal | number | string) => new Prisma.Decimal(v);
 const audit = (tx: Prisma.TransactionClient, actorId: string, action: string, entityType: string, entityId: string, metadata?: Prisma.InputJsonValue) =>
   tx.auditLog.create({ data: { actorId, action, entityType, entityId, metadata } });
+
+const notify = (tx: Prisma.TransactionClient, data: {
+  recipientId: string; actorId?: string; projectId?: string; type: NotificationType;
+  title: string; message: string; entityType?: string; entityId?: string;
+}) => tx.notification.create({ data });
+
 
 app.get("/health", (_req, res) => res.json({ status: "ok", service: "sanora-api", timestamp: new Date().toISOString() }));
 
@@ -277,6 +283,11 @@ app.post("/api/ledger/:id/approve", authenticate, allow(...financeRoles), asyncR
     if (!current || current.status !== LedgerStatus.PENDING) throw Object.assign(new Error("This entry is not awaiting approval."), { status: 409, code: "LEDGER_NOT_PENDING" });
     const updated = await tx.ledgerEntry.update({ where: { id: current.id }, data: { status: LedgerStatus.APPROVED, approvedById: req.user!.id, approvedAt: new Date() } });
     await audit(tx, req.user!.id, "LEDGER_ENTRY_APPROVED", "LedgerEntry", updated.id, { projectId: current.projectId });
+    if (current.createdById !== req.user!.id) await notify(tx, {
+      recipientId: current.createdById, actorId: req.user!.id, projectId: current.projectId, type: NotificationType.EXPENSE_APPROVED,
+      title: "Expense approved", message: "Your submitted expense has been approved and is awaiting posting.",
+      entityType: "LedgerEntry", entityId: current.id
+    });
     return updated;
   });
   return res.json({ entry });
@@ -287,6 +298,11 @@ app.post("/api/ledger/:id/post", authenticate, allow(...financeRoles), asyncRout
     if (!current || current.status !== LedgerStatus.APPROVED) throw Object.assign(new Error("Only an approved entry can be posted."), { status: 409, code: "LEDGER_NOT_APPROVED" });
     const posted = await tx.ledgerEntry.update({ where: { id: current.id }, data: { status: LedgerStatus.POSTED, postedAt: new Date() } });
     await audit(tx, req.user!.id, "LEDGER_ENTRY_POSTED", "LedgerEntry", posted.id, { projectId: current.projectId });
+    if (current.createdById !== req.user!.id) await notify(tx, {
+      recipientId: current.createdById, actorId: req.user!.id, projectId: current.projectId, type: NotificationType.EXPENSE_POSTED,
+      title: "Expense posted", message: "Your expense has been posted to the project ledger.",
+      entityType: "LedgerEntry", entityId: current.id
+    });
     return posted;
   });
   return res.json({ entry, message: "Entry posted to the project ledger." });
@@ -450,6 +466,13 @@ app.post("/api/top-ups/:id/reconcile", authenticate, allow(...financeRoles), asy
     await audit(tx, req.user!.id, body.decision === "CONFIRM" ? "CUSTOMER_TOP_UP_RECONCILED" : "CUSTOMER_TOP_UP_REJECTED", "TopUpRequest", topUp.id, {
       projectId: topUp.projectId, amount: topUp.amount.toFixed(2), ledgerEntryId: ledgerEntry?.id, reason: body.reason
     });
+    await notify(tx, {
+      recipientId: topUp.requestedById, actorId: req.user!.id, projectId: topUp.projectId,
+      type: body.decision === "CONFIRM" ? NotificationType.TOP_UP_CONFIRMED : NotificationType.TOP_UP_REJECTED,
+      title: body.decision === "CONFIRM" ? "Project top-up confirmed" : "Project top-up rejected",
+      message: body.decision === "CONFIRM" ? "Your payment reference " + topUp.reference + " was verified and posted to the project ledger." : "Your payment reference " + topUp.reference + " was rejected. " + (body.reason || ""),
+      entityType: "TopUpRequest", entityId: topUp.id
+    });
     return { ledgerEntry };
   });
   return res.json({ topUp: { id: topUp.id, status: body.decision === "CONFIRM" ? TopUpRequestStatus.CONFIRMED : TopUpRequestStatus.REJECTED, ledgerEntryId: result.ledgerEntry?.id || null }, message: body.decision === "CONFIRM" ? "Payment reconciled and posted to the project ledger." : "Top-up request rejected with a recorded reason." });
@@ -534,6 +557,11 @@ app.post("/api/purchase-orders/:id/approve", authenticate, allow(...financeRoles
   const updated = await prisma.$transaction(async tx => {
     const value = await tx.purchaseOrder.update({ where: { id: po.id }, data: { status: PurchaseOrderStatus.APPROVED, approvedById: req.user!.id, approvedAt: new Date() } });
     await audit(tx, req.user!.id, "PURCHASE_ORDER_APPROVED", "PurchaseOrder", po.id, { orderNumber: po.orderNumber, subtotal: po.subtotal.toString() });
+    if (po.createdById !== req.user!.id) await notify(tx, {
+      recipientId: po.createdById, actorId: req.user!.id, projectId: po.projectId, type: NotificationType.PURCHASE_ORDER_APPROVED,
+      title: "Purchase order approved", message: "Purchase order " + po.orderNumber + " has been approved.",
+      entityType: "PurchaseOrder", entityId: po.id
+    });
     return value;
   });
   return res.json({ purchaseOrder: updated, message: "Purchase order approved. Material receipts can now be recorded." });
@@ -627,6 +655,11 @@ app.post("/api/labour/:id/approve", authenticate, allow(...financeRoles), asyncR
       evidenceUrl: current.evidenceUrl, idempotencyKey: "labour-record:" + current.id, createdById: req.user!.id
     } });
     await audit(tx, req.user!.id, "LABOUR_RECORD_APPROVED", "LabourRecord", current.id, { projectId: current.projectId, amount: current.amount.toString() });
+    if (current.recordedById !== req.user!.id) await notify(tx, {
+      recipientId: current.recordedById, actorId: req.user!.id, projectId: current.projectId, type: NotificationType.LABOUR_APPROVED,
+      title: "Labour record approved", message: "Your labour record for " + current.workerName + " has been approved and queued for Finance posting.",
+      entityType: "LabourRecord", entityId: current.id
+    });
     return approved;
   });
   return res.json({ labourRecord: record, message: "Labour approved and queued as a pending ledger expense. Finance must separately approve and post the expense." });
@@ -695,6 +728,14 @@ app.post("/api/projects/:id/updates", authenticate, allow(UserRole.SUPER_ADMIN, 
     await audit(tx, req.user!.id, "PROJECT_UPDATE_RECORDED", "ProjectUpdate", created.id, {
       projectId, category: body.category, hasLocation: body.latitude !== undefined
     });
+    if (body.customerVisible) {
+      const project = await tx.project.findUnique({ where: { id: projectId }, select: { customerId: true } });
+      if (project?.customerId && project.customerId !== req.user!.id) await notify(tx, {
+        recipientId: project.customerId, actorId: req.user!.id, projectId, type: NotificationType.SITE_UPDATE_PUBLISHED,
+        title: "New site update published", message: "A new site update is available in your Sanora project workspace.",
+        entityType: "ProjectUpdate", entityId: created.id
+      });
+    }
     return created;
   });
   return res.status(201).json({ update, message: "Site update recorded successfully." });
@@ -712,9 +753,41 @@ app.post("/api/project-updates/:id/customer-visibility", authenticate, allow(Use
       data: { customerVisible: body.customerVisible }
     });
     await audit(tx, req.user!.id, "PROJECT_UPDATE_VISIBILITY_CHANGED", "ProjectUpdate", result.id, { projectId: result.projectId, customerVisible: body.customerVisible, linkedPhotosUpdated: photos.count });
+    if (body.customerVisible && !update.customerVisible) {
+      const project = await tx.project.findUnique({ where: { id: result.projectId }, select: { customerId: true } });
+      if (project?.customerId && project.customerId !== req.user!.id) await notify(tx, {
+        recipientId: project.customerId, actorId: req.user!.id, projectId: result.projectId, type: NotificationType.SITE_UPDATE_PUBLISHED,
+        title: "New site update published", message: "A site update is now available in your Sanora project workspace.",
+        entityType: "ProjectUpdate", entityId: result.id
+      });
+    }
     return result;
   });
   return res.json({ update: { id: saved.id, customerVisible: saved.customerVisible }, message: body.customerVisible ? "Site update published to the customer portal." : "Site update is now internal only." });
+}));
+
+
+app.get("/api/notifications", authenticate, asyncRoute(async (req, res) => {
+  const [notifications, unreadCount] = await Promise.all([
+    prisma.notification.findMany({
+      where: { recipientId: req.user!.id }, orderBy: { createdAt: "desc" }, take: 50,
+      include: { project: { select: { id: true, code: true, name: true } } }
+    }),
+    prisma.notification.count({ where: { recipientId: req.user!.id, readAt: null } })
+  ]);
+  return res.json({ notifications, unreadCount });
+}));
+app.post("/api/notifications/:id/read", authenticate, asyncRoute(async (req, res) => {
+  const result = await prisma.notification.updateMany({
+    where: { id: routeParam(req, "id"), recipientId: req.user!.id, readAt: null },
+    data: { readAt: new Date() }
+  });
+  if (!result.count) return res.status(404).json({ error: { code: "NOTIFICATION_NOT_FOUND", message: "Notification was not found or is already read." } });
+  return res.json({ message: "Notification marked as read." });
+}));
+app.post("/api/notifications/read-all", authenticate, asyncRoute(async (req, res) => {
+  const result = await prisma.notification.updateMany({ where: { recipientId: req.user!.id, readAt: null }, data: { readAt: new Date() } });
+  return res.json({ updated: result.count, message: "All notifications marked as read." });
 }));
 
 app.get("/api/operations/summary", authenticate, asyncRoute(async (req, res) => {
@@ -1027,6 +1100,11 @@ app.post("/api/projects/:id/tasks", authenticate, allow(...planningRoles), async
       ...(body.dependsOnIds.length ? { blockedBy: { create: body.dependsOnIds.map(predecessorId => ({ predecessorId })) } } : {})
     } });
     await audit(tx, req.user!.id, "PROJECT_TASK_CREATED", "ProjectTask", created.id, { projectId, milestoneId: body.milestoneId, assignedToId: body.assignedToId, dependsOn: body.dependsOnIds });
+    if (body.assignedToId && body.assignedToId !== req.user!.id) await notify(tx, {
+      recipientId: body.assignedToId, actorId: req.user!.id, projectId, type: NotificationType.TASK_ASSIGNED,
+      title: "New project task assigned", message: "You have been assigned: " + created.title,
+      entityType: "ProjectTask", entityId: created.id
+    });
     return created;
   });
   return res.status(201).json({ task, message: "Project task created and assigned." });
@@ -1071,6 +1149,19 @@ app.patch("/api/tasks/:id", authenticate, allow(...planningRoles), asyncRoute(as
       completedAt: nextStatus === ProjectTaskStatus.COMPLETED ? new Date() : body.status ? null : undefined
     } });
     await audit(tx, req.user!.id, "PROJECT_TASK_UPDATED", "ProjectTask", id, { projectId: current.projectId, changes: Object.keys(body), status: nextStatus, progressPercent });
+    if (body.status && body.status !== current.status) {
+      const recipients = new Set([current.createdById, current.assignedToId].filter((value): value is string => Boolean(value) && value !== req.user!.id));
+      for (const recipientId of recipients) await notify(tx, {
+        recipientId, actorId: req.user!.id, projectId: current.projectId, type: NotificationType.TASK_UPDATED,
+        title: "Project task updated", message: saved.title + " is now " + nextStatus.toLowerCase().replace(/_/g, " ") + ".",
+        entityType: "ProjectTask", entityId: saved.id
+      });
+    }
+    if (body.assignedToId && body.assignedToId !== current.assignedToId && body.assignedToId !== req.user!.id) await notify(tx, {
+      recipientId: body.assignedToId, actorId: req.user!.id, projectId: current.projectId, type: NotificationType.TASK_ASSIGNED,
+      title: "Project task assigned to you", message: "You have been assigned: " + saved.title,
+      entityType: "ProjectTask", entityId: saved.id
+    });
     return saved;
   });
   return res.json({ task: updated, message: "Project task updated." });

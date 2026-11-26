@@ -128,7 +128,7 @@ app.post("/api/public/enquiries", enquiryLimiter, asyncRoute(async (req, res) =>
   const body = z.object({
     name: z.string().trim().min(2).max(120),
     email: z.string().trim().email().max(254).optional().or(z.literal("")),
-    phone: z.string().trim().regex(/^[+0-9()\\-\\s]{7,24}$/),
+    phone: z.string().trim().regex(/^[+0-9()\-\s]{7,24}$/),
     interest: z.string().trim().min(2).max(120),
     message: z.string().trim().max(2000).optional(),
     companyWebsite: z.string().max(300).optional()

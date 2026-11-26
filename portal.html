@@ -90,7 +90,20 @@
           <div id="financeTopUpHistory" class="empty-state">Loading requests for this project…</div>
         </section>
         <section class="panel" id="labour"><div class="panel-head"><div><span class="eyebrow">SITE OPERATIONS</span><h3>Labour records</h3></div></div><div id="labourRecords" class="empty-state">Loading labour records…</div></section>
-        <section class="panel" id="siteUpdates"><div class="panel-head"><div><span class="eyebrow">SITE DIARY</span><h3>Recent site updates</h3></div><span class="live-label">GPS WHEN AVAILABLE</span></div><div id="siteUpdateList" class="empty-state">Loading site updates…</div></section>
+        <section class="panel" id="siteUpdates">
+          <div class="panel-head"><div><span class="eyebrow">SITE DIARY</span><h3>Recent site updates</h3></div><span class="live-label">GPS & PHOTO EVIDENCE</span></div>
+          <form id="siteUpdateForm" class="site-update-form" hidden>
+            <label for="siteUpdateCategory">Update category</label><select id="siteUpdateCategory" name="category"><option value="SITE_PROGRESS">Site progress</option><option value="MATERIAL_DELIVERY">Material delivery</option><option value="QUALITY">Quality</option><option value="SAFETY">Safety</option><option value="MILESTONE">Milestone</option><option value="GENERAL">General</option></select>
+            <label for="siteUpdateTitle">Title</label><input id="siteUpdateTitle" name="title" required minlength="3" maxlength="160" placeholder="What happened on site?">
+            <label for="siteUpdateDescription">Description</label><textarea id="siteUpdateDescription" name="description" rows="3" required minlength="3" maxlength="2000" placeholder="Describe the work completed, delivery, inspection or issue"></textarea>
+            <div class="gps-inputs"><div><label for="siteLatitude">Latitude</label><input id="siteLatitude" name="latitude" type="number" step="any" min="-90" max="90"></div><div><label for="siteLongitude">Longitude</label><input id="siteLongitude" name="longitude" type="number" step="any" min="-180" max="180"></div></div>
+            <button type="button" id="captureSiteLocation" class="secondary-action">Use current phone location</button>
+            <label for="sitePhotos">Site photos (up to 5)</label><input id="sitePhotos" name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple>
+            <label class="inline-check" id="siteUpdateVisibilityLabel"><input id="siteUpdateVisibility" type="checkbox"> Publish update to customer</label>
+            <button type="submit" id="siteUpdateSubmit">Save site update</button><p id="siteUpdateMessage" class="form-message" role="status" aria-live="polite"></p>
+          </form>
+          <div id="siteUpdateList" class="empty-state">Loading site updates…</div>
+        </section>
       </div>
       <div class="content-grid">
         <section class="panel" id="workPlan">

@@ -103,7 +103,9 @@ const documentUploadSchema = z.object({
   contentType: z.string().min(1).max(120),
   sizeBytes: z.number().int().positive().max(documentMaxBytes),
   category: z.nativeEnum(ProjectDocumentCategory).default(ProjectDocumentCategory.OTHER),
-  description: z.string().max(500).optional()
+  description: z.string().max(500).optional(),
+  projectUpdateId: z.string().uuid().optional(),
+  customerVisible: z.boolean().default(false)
 });
 const safeFileName = (name: string) => name.replace(/[\/\\\u0000-\u001f\u007f]/g, "_").replace(/\s+/g, " ").trim().slice(0, 180) || "document";
 
@@ -576,7 +578,8 @@ const projectUpdateSchema = z.object({
   description: z.string().min(3).max(2000),
   recordedAt: z.string().datetime().optional(),
   latitude: z.number().min(-90).max(90).optional(),
-  longitude: z.number().min(-180).max(180).optional()
+  longitude: z.number().min(-180).max(180).optional(),
+  customerVisible: z.boolean().default(false)
 }).superRefine((value, ctx) => {
   if ((value.latitude === undefined) !== (value.longitude === undefined)) {
     ctx.addIssue({ code: "custom", message: "Latitude and longitude must be supplied together.", path: ["latitude"] });
@@ -586,8 +589,11 @@ app.get("/api/projects/:id/updates", authenticate, asyncRoute(async (req, res) =
   const projectId = routeParam(req, "id");
   if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   const updates = await prisma.projectUpdate.findMany({
-    where: { projectId }, orderBy: { recordedAt: "desc" }, take: 100,
-    include: { createdBy: { select: { id: true, name: true, role: true } } }
+    where: { projectId, ...(req.user!.role === UserRole.CUSTOMER ? { customerVisible: true } : {}) }, orderBy: { recordedAt: "desc" }, take: 100,
+    include: {
+      createdBy: { select: { id: true, name: true, role: true } },
+      documents: { where: { status: ProjectDocumentStatus.AVAILABLE, ...(req.user!.role === UserRole.CUSTOMER ? { customerVisible: true } : {}) }, select: { id: true, originalName: true, contentType: true, sizeBytes: true, customerVisible: true } }
+    }
   });
   return res.json({ updates });
 }));
@@ -595,6 +601,7 @@ app.post("/api/projects/:id/updates", authenticate, allow(UserRole.SUPER_ADMIN, 
   const projectId = routeParam(req, "id");
   if (!(await projectAccess(req.user!, projectId, "UPDATE"))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   const body = projectUpdateSchema.parse(req.body);
+  if (body.customerVisible && !(await projectAccess(req.user!, projectId, "MANAGE"))) return res.status(403).json({ error: { code: "UPDATE_VISIBILITY_REQUIRES_MANAGER", message: "Only a project manager can publish site updates to the customer portal." } });
   const update = await prisma.$transaction(async tx => {
     const created = await tx.projectUpdate.create({
       data: {
@@ -602,7 +609,7 @@ app.post("/api/projects/:id/updates", authenticate, allow(UserRole.SUPER_ADMIN, 
         recordedAt: body.recordedAt ? new Date(body.recordedAt) : new Date(),
         latitude: body.latitude === undefined ? undefined : money(body.latitude),
         longitude: body.longitude === undefined ? undefined : money(body.longitude),
-        createdById: req.user!.id
+        createdById: req.user!.id, customerVisible: body.customerVisible
       },
       include: { createdBy: { select: { id: true, name: true, role: true } } }
     });
@@ -614,6 +621,22 @@ app.post("/api/projects/:id/updates", authenticate, allow(UserRole.SUPER_ADMIN, 
   return res.status(201).json({ update, message: "Site update recorded successfully." });
 }));
 
+
+app.post("/api/project-updates/:id/customer-visibility", authenticate, allow(UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER), asyncRoute(async (req, res) => {
+  const update = await prisma.projectUpdate.findUnique({ where: { id: routeParam(req, "id") } });
+  if (!update || !(await projectAccess(req.user!, update.projectId, "MANAGE"))) return res.status(404).json({ error: { code: "PROJECT_UPDATE_NOT_FOUND", message: "Site update was not found." } });
+  const body = z.object({ customerVisible: z.boolean() }).parse(req.body);
+  const saved = await prisma.$transaction(async tx => {
+    const result = await tx.projectUpdate.update({ where: { id: update.id }, data: { customerVisible: body.customerVisible } });
+    const photos = await tx.projectDocument.updateMany({
+      where: { projectUpdateId: result.id, category: ProjectDocumentCategory.SITE_PHOTO },
+      data: { customerVisible: body.customerVisible }
+    });
+    await audit(tx, req.user!.id, "PROJECT_UPDATE_VISIBILITY_CHANGED", "ProjectUpdate", result.id, { projectId: result.projectId, customerVisible: body.customerVisible, linkedPhotosUpdated: photos.count });
+    return result;
+  });
+  return res.json({ update: { id: saved.id, customerVisible: saved.customerVisible }, message: body.customerVisible ? "Site update published to the customer portal." : "Site update is now internal only." });
+}));
 app.use((req, res) => res.status(404).json({ error: { code: "ROUTE_NOT_FOUND", message: "The requested service endpoint was not found." } }));
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof ZodError) return res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Please check the submitted information.", details: err.issues.map(i => ({ field: i.path.join("."), message: i.message })) } });
@@ -630,7 +653,7 @@ app.get("/api/projects/:id/documents", authenticate, asyncRoute(async (req, res)
   if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   const customer = req.user!.role === UserRole.CUSTOMER;
   const documents = await prisma.projectDocument.findMany({
-    where: { projectId, status: ProjectDocumentStatus.AVAILABLE, ...(customer ? { customerVisible: true } : {}) },
+    where: { projectId, status: ProjectDocumentStatus.AVAILABLE, ...(customer ? { customerVisible: true, OR: [{ projectUpdateId: null }, { projectUpdate: { is: { customerVisible: true } } }] } : {}) },
     select: { id: true, category: true, originalName: true, contentType: true, sizeBytes: true, description: true, customerVisible: true, createdAt: true, availableAt: true, uploadedBy: { select: { name: true } } },
     orderBy: { createdAt: "desc" }, take: 100
   });
@@ -641,12 +664,19 @@ app.post("/api/projects/:id/documents/upload-url", authenticate, allow(...staffR
   const projectId = routeParam(req, "id");
   if (!(await projectAccess(req.user!, projectId, "UPDATE"))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   const body = documentUploadSchema.parse(req.body);
+  if (body.customerVisible && !(await projectAccess(req.user!, projectId, "MANAGE"))) return res.status(403).json({ error: { code: "DOCUMENT_VISIBILITY_REQUIRES_MANAGER", message: "Only a project manager can publish documents to the customer portal." } });
+  if (body.projectUpdateId) {
+    const update = await prisma.projectUpdate.findFirst({ where: { id: body.projectUpdateId, projectId }, select: { id: true } });
+    if (!update || body.category !== ProjectDocumentCategory.SITE_PHOTO) return res.status(400).json({ error: { code: "INVALID_SITE_PHOTO_LINK", message: "Site photos must be attached to a site update in the same project." } });
+  } else if (body.category === ProjectDocumentCategory.SITE_PHOTO) {
+    return res.status(400).json({ error: { code: "SITE_PHOTO_UPDATE_REQUIRED", message: "Create a site diary update before uploading its photos." } });
+  }
   if (!allowedDocumentTypes.has(body.contentType)) return res.status(415).json({ error: { code: "DOCUMENT_TYPE_NOT_ALLOWED", message: "This file type is not supported. Upload PDF, JPG, PNG, WebP, DOC, DOCX or XLSX files." } });
   const { client, bucket } = getPrivateObjectStore();
   const documentId = randomUUID();
   const storageKey = "projects/" + projectId + "/documents/" + documentId;
   const document = await prisma.projectDocument.create({
-    data: { id: documentId, projectId, uploadedById: req.user!.id, category: body.category, originalName: safeFileName(body.fileName), storageKey, contentType: body.contentType, sizeBytes: body.sizeBytes, description: body.description }
+    data: { id: documentId, projectId, projectUpdateId: body.projectUpdateId, uploadedById: req.user!.id, category: body.category, originalName: safeFileName(body.fileName), storageKey, contentType: body.contentType, sizeBytes: body.sizeBytes, description: body.description, customerVisible: body.customerVisible }
   });
   try {
     const command = new PutObjectCommand({
@@ -680,14 +710,15 @@ app.post("/api/documents/:id/complete", authenticate, allow(...staffRoles), asyn
 }));
 
 app.post("/api/documents/:id/download-url", authenticate, asyncRoute(async (req, res) => {
-  const document = await prisma.projectDocument.findUnique({ where: { id: routeParam(req, "id") } });
+  const body = z.object({ inline: z.boolean().optional() }).parse(req.body || {});
+  const document = await prisma.projectDocument.findUnique({ where: { id: routeParam(req, "id") }, include: { projectUpdate: { select: { customerVisible: true } } } });
   if (!document || document.status !== ProjectDocumentStatus.AVAILABLE) return res.status(404).json({ error: { code: "DOCUMENT_NOT_FOUND", message: "Document was not found." } });
   if (!(await projectAccess(req.user!, document.projectId))) return res.status(404).json({ error: { code: "DOCUMENT_NOT_FOUND", message: "Document was not found." } });
-  if (req.user!.role === UserRole.CUSTOMER && !document.customerVisible) return res.status(404).json({ error: { code: "DOCUMENT_NOT_FOUND", message: "Document was not found." } });
+  if (req.user!.role === UserRole.CUSTOMER && (!document.customerVisible || (document.projectUpdateId && !document.projectUpdate?.customerVisible))) return res.status(404).json({ error: { code: "DOCUMENT_NOT_FOUND", message: "Document was not found." } });
   const { client, bucket } = getPrivateObjectStore();
   const downloadUrl = await getSignedUrl(client, new GetObjectCommand({
     Bucket: bucket, Key: document.storageKey,
-    ResponseContentDisposition: "attachment; filename*=UTF-8''" + encodeURIComponent(document.originalName)
+    ResponseContentDisposition: (body.inline && document.contentType.startsWith("image/") ? "inline" : "attachment") + "; filename*=UTF-8''" + encodeURIComponent(document.originalName)
   }), { expiresIn: 180 });
   await prisma.auditLog.create({ data: { actorId: req.user!.id, action: "PROJECT_DOCUMENT_DOWNLOAD_LINK_CREATED", entityType: "ProjectDocument", entityId: document.id, metadata: { projectId: document.projectId } } });
   return res.json({ downloadUrl, expiresInSeconds: 180 });

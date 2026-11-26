@@ -177,25 +177,43 @@
       taskList.append(item);
     });
   }
-  function renderSiteUpdates(updates) {
+  async function renderSiteUpdates(updates) {
     const container = $("#siteUpdateList"); container.replaceChildren();
-    if (!updates?.length) return empty(container, "No site updates have been recorded for this project yet.");
-    updates.slice(0, 8).forEach(update => {
-      const card = document.createElement("article"); card.className = "site-update";
-      const category = document.createElement("span"); category.className = "eyebrow"; category.textContent = titleCase(update.category);
-      const heading = document.createElement("b"); heading.textContent = update.title;
-      const description = document.createElement("p"); description.textContent = update.description;
-      const meta = document.createElement("small"); meta.textContent = date(update.recordedAt) + " · " + (update.createdBy?.name || "Sanora team");
+    if (!updates?.length) return empty(container, "No customer-visible site updates have been published yet.");
+    const manager = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER"].includes(currentUser?.role);
+    for (const update of updates.slice(0, 12)) {
+      const card = window.document.createElement("article"); card.className = "site-update";
+      const category = window.document.createElement("span"); category.className = "eyebrow"; category.textContent = titleCase(update.category);
+      const heading = window.document.createElement("b"); heading.textContent = update.title;
+      const description = window.document.createElement("p"); description.textContent = update.description;
+      const meta = window.document.createElement("small"); meta.textContent = date(update.recordedAt) + " · " + (update.createdBy?.name || "Sanora team") + (update.customerVisible ? " · Published" : " · Internal");
       card.append(category, heading, description, meta);
       if (update.latitude != null && update.longitude != null) {
-        const coords = document.createElement("a");
+        const coords = window.document.createElement("a");
         const lat = Number(update.latitude), lon = Number(update.longitude);
         coords.href = "https://www.google.com/maps?q=" + encodeURIComponent(lat + "," + lon);
         coords.target = "_blank"; coords.rel = "noopener noreferrer"; coords.textContent = "View recorded location ↗";
         card.append(coords);
       }
+      for (const photo of (update.documents || []).filter(doc => doc.contentType?.startsWith("image/"))) {
+        try {
+          const signed = await api("/documents/" + encodeURIComponent(photo.id) + "/download-url", { method: "POST", body: JSON.stringify({ inline: true }) });
+          const img = window.document.createElement("img"); img.className = "site-photo"; img.src = signed.downloadUrl; img.alt = photo.originalName; img.loading = "lazy"; card.append(img);
+        } catch { /* Expired or unavailable photo links do not break the diary. */ }
+      }
+      if (manager && !update.customerVisible) {
+        const publish = window.document.createElement("button"); publish.type = "button"; publish.className = "task-action"; publish.textContent = "Publish to customer";
+        publish.addEventListener("click", async () => {
+          publish.disabled = true;
+          try {
+            const result = await api("/project-updates/" + encodeURIComponent(update.id) + "/customer-visibility", { method: "POST", body: JSON.stringify({ customerVisible: true }) });
+            message("#dashboardMessage", result.message, "info"); await loadProject(activeProjectId);
+          } catch (error) { message("#dashboardMessage", error.message, "error"); publish.disabled = false; }
+        });
+        card.append(publish);
+      }
       container.append(card);
-    });
+    }
   }
   function renderProject(project, ledger, orders, labour, updates, workPlan) {
     const summary = ledger.summary || {};
@@ -217,7 +235,7 @@
     renderTransactions(ledger.entries || []);
     renderOrders(orders.purchaseOrders || []);
     renderLabour(labour.labourRecords || []);
-    renderSiteUpdates(updates.updates || []);
+    renderSiteUpdates(updates.updates || []).catch(error => empty($("#siteUpdateList"), error.message));
     renderWorkPlan(workPlan);
     renderDocuments(project.id).catch(error => empty($("#projectDocuments"), error.message));
     renderTopUps(project.id).catch(error => empty($("#topUpHistory"), error.message));
@@ -271,6 +289,8 @@
     const planningRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role);
     const managerRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER"].includes(currentUser?.role);
     $("#planningControls").hidden = !planningRole;
+    $("#siteUpdateForm").hidden = !planningRole;
+    $("#siteUpdateVisibilityLabel").hidden = !managerRole;
     $("#milestoneVisibilityLabel").hidden = !managerRole;
     $("#taskVisibilityLabel").hidden = !managerRole;
     try { await loadProjects(); }
@@ -297,6 +317,57 @@
   $("#projectSelect").addEventListener("change", async event => {
     try { await loadProject(event.target.value); }
     catch (error) { message("#dashboardMessage", error.message, "error"); }
+  });
+  $("#captureSiteLocation").addEventListener("click", () => {
+    if (!navigator.geolocation) return message("#siteUpdateMessage", "Location is not available in this browser.", "error");
+    message("#siteUpdateMessage", "Requesting phone location…", "info");
+    navigator.geolocation.getCurrentPosition(position => {
+      $("#siteLatitude").value = position.coords.latitude.toFixed(7);
+      $("#siteLongitude").value = position.coords.longitude.toFixed(7);
+      message("#siteUpdateMessage", "Current location captured.", "info");
+    }, error => {
+      message("#siteUpdateMessage", error.code === 1 ? "Location permission was denied. You can enter coordinates manually." : "Unable to get your location. Try again or enter coordinates manually.", "error");
+    }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 });
+  });
+  $("#siteUpdateForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!activeProjectId) return;
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const files = Array.from($("#sitePhotos").files || []);
+    if (files.length > 5) return message("#siteUpdateMessage", "Select up to five photos per update.", "error");
+    if (files.some(file => file.size > 15 * 1024 * 1024 || !["image/jpeg", "image/png", "image/webp"].includes(file.type))) return message("#siteUpdateMessage", "Each photo must be JPG, PNG or WebP and no larger than 15 MiB.", "error");
+    const button = $("#siteUpdateSubmit"); button.disabled = true; button.textContent = "Saving…";
+    try {
+      const latitude = form.get("latitude"), longitude = form.get("longitude");
+      const result = await api("/projects/" + encodeURIComponent(activeProjectId) + "/updates", {
+        method: "POST",
+        body: JSON.stringify({
+          category: form.get("category"), title: form.get("title"), description: form.get("description"),
+          latitude: latitude === "" || latitude === null ? undefined : Number(latitude),
+          longitude: longitude === "" || longitude === null ? undefined : Number(longitude),
+          customerVisible: $("#siteUpdateVisibility").checked
+        })
+      });
+      const updateId = result.update.id;
+      let uploaded = 0;
+      for (const file of files) {
+        const ticket = await api("/projects/" + encodeURIComponent(activeProjectId) + "/documents/upload-url", {
+          method: "POST",
+          body: JSON.stringify({ fileName: file.name, contentType: file.type, sizeBytes: file.size, category: "SITE_PHOTO", description: "Site diary photo", projectUpdateId: updateId, customerVisible: $("#siteUpdateVisibility").checked })
+        });
+        const response = await fetch(ticket.uploadUrl, { method: ticket.method, headers: ticket.requiredHeaders, body: file });
+        if (!response.ok) throw new Error("Photo upload failed for " + file.name + ". The site update itself was saved.");
+        await api("/documents/" + encodeURIComponent(ticket.document.id) + "/complete", { method: "POST", body: "{}" });
+        uploaded += 1;
+      }
+      message("#siteUpdateMessage", "Site update saved" + (files.length ? " with " + uploaded + " photo(s)." : "."), "info");
+      formElement.reset();
+      await loadProject(activeProjectId);
+    } catch (error) {
+      message("#siteUpdateMessage", error.message, "error");
+      await loadProject(activeProjectId).catch(() => undefined);
+    } finally { button.disabled = false; button.textContent = "Save site update"; }
   });
   $("#milestoneForm").addEventListener("submit", async event => {
     event.preventDefault();

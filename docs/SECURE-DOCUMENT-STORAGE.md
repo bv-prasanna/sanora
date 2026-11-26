@@ -37,3 +37,6 @@ Supported file types: PDF, JPEG, PNG, WebP, DOC, DOCX and XLSX. Maximum file siz
 - Use HTTPS for API and website traffic. For hardened production sessions, prefer same-origin HttpOnly, Secure, SameSite cookies over browser-readable bearer tokens.
 
 This storage feature does not itself approve invoices, reconcile customer funds or make a document evidence of payment.
+
+
+Site diary photo uploads must include the project update ID. Publishing or unpublishing a site diary entry synchronises the visibility of its linked site photos. The customer update API filters unpublished diary entries and photos at query time.

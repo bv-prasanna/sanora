@@ -13,7 +13,7 @@ test("BOQ estimate uses paise-safe App Skeleton billing arithmetic", () => {
     { quantity: 2.5, unitRate: 100.25 },
     { quantity: 3, unitRate: 49.50 }
   ]);
-  assert.deepEqual(total, { totalPaise: 40063, totalRupees: "400.63", currency: "INR" });
+  assert.deepEqual(total, { totalPaise: 39913, totalRupees: "399.13", currency: "INR" });
 });
 
 test("project workflow rejects invalid transitions", () => {

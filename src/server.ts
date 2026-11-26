@@ -874,8 +874,10 @@ app.get("/api/operations/summary", authenticate, asyncRoute(async (req, res) => 
     select: { id: true, code: true, name: true, status: true, location: true, updatedAt: true }
   });
   const projectIds = projects.map(project => project.id);
+  const leadWhere: Prisma.LeadWhereInput = leadGlobalRoles.includes(req.user!.role) ? {} : { OR: [{ assignedToId: req.user!.id }, { assignedToId: null }] };
+  const newLeads = await prisma.lead.count({ where: { ...leadWhere, status: LeadStatus.NEW } });
   if (!projectIds.length) return res.json({
-    summary: { totalProjects: 0, activeProjects: 0, pendingTopUps: 0, pendingExpenseReviews: 0, purchaseOrdersAwaitingApproval: 0, labourRecordsAwaitingApproval: 0, blockedTasks: 0, overdueTasks: 0 },
+    summary: { totalProjects: 0, activeProjects: 0, pendingTopUps: 0, pendingExpenseReviews: 0, purchaseOrdersAwaitingApproval: 0, labourRecordsAwaitingApproval: 0, blockedTasks: 0, overdueTasks: 0, newLeads },
     recentProjects: []
   });
   const now = new Date();
@@ -891,7 +893,7 @@ app.get("/api/operations/summary", authenticate, asyncRoute(async (req, res) => 
   return res.json({
     summary: {
       totalProjects: projects.length, activeProjects, pendingTopUps, pendingExpenseReviews,
-      purchaseOrdersAwaitingApproval, labourRecordsAwaitingApproval, blockedTasks, overdueTasks
+      purchaseOrdersAwaitingApproval, labourRecordsAwaitingApproval, blockedTasks, overdueTasks, newLeads
     },
     recentProjects: projects.slice(0, 6)
   });

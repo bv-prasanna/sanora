@@ -672,6 +672,29 @@ app.get("/api/operations/summary", authenticate, asyncRoute(async (req, res) => 
   });
 }));
 
+
+app.get("/api/projects/:id/finance-queue", authenticate, asyncRoute(async (req, res) => {
+  if (!financeRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "FINANCE_ROLE_REQUIRED", message: "Finance review queues are available only to authorised Finance users." } });
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId, "UPDATE"))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const [ledgerEntries, labourRecords, purchaseOrders] = await Promise.all([
+    prisma.ledgerEntry.findMany({
+      where: { projectId, status: { in: [LedgerStatus.PENDING, LedgerStatus.APPROVED] }, type: { in: [LedgerType.MATERIAL_EXPENSE, LedgerType.LABOUR_EXPENSE, LedgerType.OTHER_EXPENSE, LedgerType.REFUND] } },
+      include: { createdBy: { select: { id: true, name: true } } }, orderBy: { createdAt: "asc" }, take: 100
+    }),
+    prisma.labourRecord.findMany({
+      where: { projectId, status: LabourRecordStatus.SUBMITTED },
+      include: { recordedBy: { select: { id: true, name: true } } }, orderBy: { workDate: "asc" }, take: 100
+    }),
+    prisma.purchaseOrder.findMany({
+      where: { projectId, status: PurchaseOrderStatus.SUBMITTED },
+      include: { vendor: { select: { id: true, name: true } }, lines: true, createdBy: { select: { id: true, name: true } } },
+      orderBy: { createdAt: "asc" }, take: 100
+    })
+  ]);
+  return res.json({ ledgerEntries, labourRecords, purchaseOrders });
+}));
+
 app.use((req, res) => res.status(404).json({ error: { code: "ROUTE_NOT_FOUND", message: "The requested service endpoint was not found." } }));
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof ZodError) return res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Please check the submitted information.", details: err.issues.map(i => ({ field: i.path.join("."), message: i.message })) } });

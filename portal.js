@@ -54,6 +54,44 @@
     if (!records?.length) return empty(container, "No labour records have been submitted for this project.");
     records.slice(0, 6).forEach(item => row(container, "◷", item.workerName, titleCase(item.workType) + " · " + date(item.workDate) + " · " + titleCase(item.status), money(item.amount), false));
   }
+  async function financeAction(path, successMessage) {
+    try {
+      const result = await api(path, { method: "POST", body: "{}" });
+      message("#dashboardMessage", result.message || successMessage, "info");
+      await loadProject(activeProjectId);
+      await loadOperationsSummary().catch(() => undefined);
+    } catch (error) { message("#dashboardMessage", error.message, "error"); }
+  }
+  function renderFinanceQueue(queue) {
+    const ledger = $("#financeLedgerQueue"); ledger.replaceChildren();
+    const labour = $("#financeLabourQueue"); labour.replaceChildren();
+    const orders = $("#financePurchaseQueue"); orders.replaceChildren();
+    const ledgerEntries = queue.ledgerEntries || [];
+    if (!ledgerEntries.length) empty(ledger, "No expense ledger entries are awaiting Finance action.");
+    ledgerEntries.forEach(entry => {
+      row(ledger, "₹", entry.description, [titleCase(entry.type), entry.createdBy?.name, entry.reference, titleCase(entry.status)].filter(Boolean).join(" · "), money(entry.amount));
+      const action = window.document.createElement("button"); action.type = "button"; action.className = "task-action";
+      action.textContent = entry.status === "PENDING" ? "Approve expense" : "Post expense";
+      action.addEventListener("click", () => financeAction("/ledger/" + encodeURIComponent(entry.id) + (entry.status === "PENDING" ? "/approve" : "/post"), "Expense updated."));
+      ledger.lastElementChild.append(action);
+    });
+    const labourRecords = queue.labourRecords || [];
+    if (!labourRecords.length) empty(labour, "No labour records are awaiting approval.");
+    labourRecords.forEach(record => {
+      row(labour, "◷", record.workerName, [record.workType, date(record.workDate), record.recordedBy?.name].filter(Boolean).join(" · "), money(record.amount));
+      const action = window.document.createElement("button"); action.type = "button"; action.className = "task-action"; action.textContent = "Approve labour";
+      action.addEventListener("click", () => financeAction("/labour/" + encodeURIComponent(record.id) + "/approve", "Labour approved and queued as a pending expense."));
+      labour.lastElementChild.append(action);
+    });
+    const purchaseOrders = queue.purchaseOrders || [];
+    if (!purchaseOrders.length) empty(orders, "No purchase orders are awaiting approval.");
+    purchaseOrders.forEach(po => {
+      row(orders, "▦", po.orderNumber, [po.vendor?.name, po.createdBy?.name, (po.lines || []).length + " line(s)"].filter(Boolean).join(" · "), money(po.subtotal));
+      const action = window.document.createElement("button"); action.type = "button"; action.className = "task-action"; action.textContent = "Approve PO";
+      action.addEventListener("click", () => financeAction("/purchase-orders/" + encodeURIComponent(po.id) + "/approve", "Purchase order approved."));
+      orders.lastElementChild.append(action);
+    });
+  }
   async function renderTopUps(projectId) {
     const result = await api("/projects/" + encodeURIComponent(projectId) + "/top-ups");
     const customerContainer = $("#topUpHistory");
@@ -215,7 +253,7 @@
       container.append(card);
     }
   }
-  function renderProject(project, ledger, orders, labour, updates, workPlan) {
+  function renderProject(project, ledger, orders, labour, updates, workPlan, financeQueue) {
     const summary = ledger.summary || {};
     setText("#projectCode", project.code);
     setText("#projectName", project.name);
@@ -237,6 +275,7 @@
     renderLabour(labour.labourRecords || []);
     renderSiteUpdates(updates.updates || []).catch(error => empty($("#siteUpdateList"), error.message));
     renderWorkPlan(workPlan);
+    renderFinanceQueue(financeQueue || {});
     renderDocuments(project.id).catch(error => empty($("#projectDocuments"), error.message));
     renderTopUps(project.id).catch(error => empty($("#topUpHistory"), error.message));
     message("#dashboardMessage", ledger.note || "Account figures are calculated from posted ledger entries. Pending items remain separate.", "info");
@@ -267,17 +306,18 @@
     if (!projectId) return;
     activeProjectId = projectId;
     message("#dashboardMessage", "Refreshing project information…", "info");
-    const [projectResult, ledger, orders, labour, updates, workPlan, members] = await Promise.all([
+    const [projectResult, ledger, orders, labour, updates, workPlan, members, financeQueue] = await Promise.all([
       api("/projects/" + encodeURIComponent(projectId)),
       api("/projects/" + encodeURIComponent(projectId) + "/ledger"),
       api("/projects/" + encodeURIComponent(projectId) + "/purchase-orders"),
       api("/projects/" + encodeURIComponent(projectId) + "/labour"),
       api("/projects/" + encodeURIComponent(projectId) + "/updates"),
       api("/projects/" + encodeURIComponent(projectId) + "/work-plan"),
-      (["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role) ? api("/projects/" + encodeURIComponent(projectId) + "/members") : Promise.resolve({ members: [] }))
+      (["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role) ? api("/projects/" + encodeURIComponent(projectId) + "/members") : Promise.resolve({ members: [] })),
+      (["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role) ? api("/projects/" + encodeURIComponent(projectId) + "/finance-queue") : Promise.resolve({}))
     ]);
     populatePlanningForms(members.members || [], workPlan.milestones || []);
-    renderProject(projectResult.project, ledger, orders, labour, updates, workPlan);
+    renderProject(projectResult.project, ledger, orders, labour, updates, workPlan, financeQueue);
   }
   async function loadOperationsSummary() {
     const result = await api("/operations/summary");
@@ -323,7 +363,9 @@
     setText("#userInitials", initials(currentUser?.name));
     $("#operationsOverview").hidden = currentUser?.role === "CUSTOMER";
     $("#topUpPanel").hidden = currentUser?.role !== "CUSTOMER";
-    $("#financeTopUpPanel").hidden = !["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role);
+    const financeRole = ["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role);
+    $("#financeTopUpPanel").hidden = !financeRole;
+    $("#financeQueuePanel").hidden = !financeRole;
     const planningRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role);
     const managerRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER"].includes(currentUser?.role);
     $("#planningControls").hidden = !planningRole;

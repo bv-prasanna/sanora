@@ -58,7 +58,6 @@
     container.replaceChildren();
     if (!result.documents?.length) return empty(container, "No customer-shareable project documents have been published yet.");
     result.documents.forEach(document => {
-      const item = document.createElement ? document : document;
       const line = window.document.createElement("div"); line.className = "document-row";
       const info = window.document.createElement("div");
       const name = window.document.createElement("b"); name.textContent = document.originalName;

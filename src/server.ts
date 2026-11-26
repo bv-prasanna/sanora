@@ -300,7 +300,7 @@ app.get("/api/projects/:id/ledger", authenticate, asyncRoute(async (req, res) =>
 }));
 
 const topUpRequestSchema = z.object({
-  amount: z.string().regex(/^\\d+(\\.\\d{1,2})?$/, "Enter an amount with up to two decimal places.").transform(value => money(value)).refine(value => value.gt(0) && value.lte(100000000), "Enter a valid top-up amount."),
+  amount: z.string().regex(/^\d+(\.\d{1,2})?$/, "Enter an amount with up to two decimal places.").transform(value => money(value)).refine(value => value.gt(0) && value.lte(100000000), "Enter a valid top-up amount."),
   paymentMode: z.enum(["UPI", "BANK_TRANSFER", "CHEQUE", "CASH", "OTHER"]),
   reference: z.string().trim().min(3).max(120),
   notes: z.string().trim().max(500).optional()

@@ -628,7 +628,11 @@ app.post("/api/project-updates/:id/customer-visibility", authenticate, allow(Use
   const body = z.object({ customerVisible: z.boolean() }).parse(req.body);
   const saved = await prisma.$transaction(async tx => {
     const result = await tx.projectUpdate.update({ where: { id: update.id }, data: { customerVisible: body.customerVisible } });
-    await audit(tx, req.user!.id, "PROJECT_UPDATE_VISIBILITY_CHANGED", "ProjectUpdate", result.id, { projectId: result.projectId, customerVisible: body.customerVisible });
+    const photos = await tx.projectDocument.updateMany({
+      where: { projectUpdateId: result.id, category: ProjectDocumentCategory.SITE_PHOTO },
+      data: { customerVisible: body.customerVisible }
+    });
+    await audit(tx, req.user!.id, "PROJECT_UPDATE_VISIBILITY_CHANGED", "ProjectUpdate", result.id, { projectId: result.projectId, customerVisible: body.customerVisible, linkedPhotosUpdated: photos.count });
     return result;
   });
   return res.json({ update: { id: saved.id, customerVisible: saved.customerVisible }, message: body.customerVisible ? "Site update published to the customer portal." : "Site update is now internal only." });

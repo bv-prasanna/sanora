@@ -84,6 +84,8 @@ model User {
   recordedLabour LabourRecord[] @relation("LabourRecorder")
   authoredProjectUpdates ProjectUpdate[] @relation("ProjectUpdateAuthor")
   uploadedProjectDocuments ProjectDocument[] @relation("ProjectDocumentUploader")
+  submittedTopUps TopUpRequest[] @relation("TopUpRequester")
+  reviewedTopUps TopUpRequest[] @relation("TopUpReviewer")
 }
 
 model Project {
@@ -107,6 +109,7 @@ model Project {
   labourRecords LabourRecord[]
   updates ProjectUpdate[]
   documents ProjectDocument[]
+  topUpRequests TopUpRequest[]
   @@index([customerId, status])
 }
 
@@ -174,6 +177,7 @@ model LedgerEntry {
   postedAt       DateTime?
   project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   createdBy      User         @relation("LedgerActor", fields: [createdById], references: [id])
+  topUpRequest TopUpRequest?
   @@index([projectId, status, type])
 }
 
@@ -372,4 +376,35 @@ model ProjectDocument {
   uploadedBy      User                    @relation("ProjectDocumentUploader", fields: [uploadedById], references: [id])
   @@index([projectId, status, category, createdAt])
   @@index([uploadedById, status])
+}
+
+enum TopUpRequestStatus {
+  SUBMITTED
+  CONFIRMED
+  REJECTED
+}
+
+model TopUpRequest {
+  id             String             @id @default(uuid())
+  projectId      String
+  requestedById  String
+  reviewedById   String?
+  amount         Decimal            @db.Decimal(14, 2)
+  paymentMode    String
+  reference      String
+  notes          String?
+  status         TopUpRequestStatus @default(SUBMITTED)
+  reviewReason   String?
+  ledgerEntryId  String?            @unique
+  submittedAt    DateTime           @default(now())
+  reviewedAt     DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  project        Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requestedBy    User               @relation("TopUpRequester", fields: [requestedById], references: [id])
+  reviewedBy     User?              @relation("TopUpReviewer", fields: [reviewedById], references: [id])
+  ledgerEntry    LedgerEntry?       @relation(fields: [ledgerEntryId], references: [id])
+  @@unique([projectId, reference])
+  @@index([projectId, status, submittedAt])
+  @@index([requestedById, status])
 }

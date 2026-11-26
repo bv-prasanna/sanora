@@ -5,7 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { Prisma, PrismaClient, UserRole, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory, ProjectDocumentCategory, ProjectDocumentStatus } from "@prisma/client";
+import { Prisma, PrismaClient, UserRole, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory, ProjectDocumentCategory, ProjectDocumentStatus, TopUpRequestStatus } from "@prisma/client";
 import { z, ZodError } from "zod";
 import { randomUUID } from "node:crypto";
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
@@ -235,14 +235,13 @@ const ledgerSchema = z.object({
 app.post("/api/projects/:id/ledger", authenticate, asyncRoute(async (req, res) => {
   const body = ledgerSchema.parse(req.body);
   const projectId = routeParam(req, "id");
-  if (req.user!.role === UserRole.CUSTOMER && body.type === "TOP_UP" && !body.reference && !body.evidenceUrl) {
-    return res.status(400).json({ error: { code: "TOP_UP_EVIDENCE_REQUIRED", message: "Please provide a payment reference or receipt evidence. The top-up remains pending until finance verifies it." } });
+  if (body.type === "TOP_UP") {
+    return res.status(409).json({ error: { code: "USE_TOP_UP_RECONCILIATION", message: "Top-ups must be created through the customer submission and finance reconciliation workflow." } });
   }
   if (!(await projectAccess(req.user!, projectId, req.user!.role === UserRole.CUSTOMER ? "VIEW" : "UPDATE"))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
-  if (req.user!.role === UserRole.CUSTOMER && body.type !== "TOP_UP") return res.status(403).json({ error: { code: "CUSTOMER_LEDGER_RESTRICTED", message: "Customers can submit top-up receipts. Expense entries are recorded by authorised project staff." } });
-  if (body.type === "TOP_UP" && !([...financeRoles, UserRole.CUSTOMER] as UserRole[]).includes(req.user!.role)) return res.status(403).json({ error: { code: "TOP_UP_ROLE_REQUIRED", message: "Only customers or finance staff can record a top-up receipt." } });
+  if (req.user!.role === UserRole.CUSTOMER) return res.status(403).json({ error: { code: "CUSTOMER_LEDGER_RESTRICTED", message: "Customers submit payment details through the top-up reconciliation workflow. Expense entries are recorded by authorised project staff." } });
   if (body.type === "REFUND" && !financeRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "FINANCE_APPROVAL_REQUIRED", message: "Only finance-authorised users can submit project refunds." } });
-  if (body.type !== "TOP_UP" && !expenseRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "STAFF_ROLE_REQUIRED", message: "Only authorised project or finance staff can submit expenses." } });
+  if (!expenseRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "STAFF_ROLE_REQUIRED", message: "Only authorised project or finance staff can submit expenses." } });
   const key = req.header("Idempotency-Key");
   if (!key || key.length < 8 || key.length > 120) return res.status(400).json({ error: { code: "IDEMPOTENCY_KEY_REQUIRED", message: "Provide a unique Idempotency-Key header for this transaction." } });
   const entry = await prisma.$transaction(async tx => {
@@ -299,6 +298,82 @@ app.get("/api/projects/:id/ledger", authenticate, asyncRoute(async (req, res) =>
   const summary = calculateProjectBalance(entries.filter(e => e.type !== LedgerType.REVERSAL).map(e => ({ type: e.type as PostedLedgerLine["type"], amount: e.amount })), commitments);
   return res.json({ entries, summary: { currency: "INR", ...summary }, note: "Only posted ledger entries affect actual balances. Pending commitments are shown separately and are not double-deducted from actual expenses." });
 }));
+
+const topUpRequestSchema = z.object({
+  amount: z.string().regex(/^\d+(\.\d{1,2})?$/, "Enter an amount with up to two decimal places.").transform(value => money(value)).refine(value => value.gt(0) && value.lte(100000000), "Enter a valid top-up amount."),
+  paymentMode: z.enum(["UPI", "BANK_TRANSFER", "CHEQUE", "CASH", "OTHER"]),
+  reference: z.string().trim().min(3).max(120),
+  notes: z.string().trim().max(500).optional()
+});
+app.get("/api/projects/:id/top-ups", authenticate, asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const customer = req.user!.role === UserRole.CUSTOMER;
+  const topUps = await prisma.topUpRequest.findMany({
+    where: { projectId, ...(customer ? { requestedById: req.user!.id } : {}) },
+    include: { requestedBy: { select: { id: true, name: true } }, reviewedBy: { select: { id: true, name: true } } },
+    orderBy: { submittedAt: "desc" }, take: 100
+  });
+  return res.json({ topUps });
+}));
+app.post("/api/projects/:id/top-ups", authenticate, asyncRoute(async (req, res) => {
+  if (req.user!.role !== UserRole.CUSTOMER) return res.status(403).json({ error: { code: "CUSTOMER_ROLE_REQUIRED", message: "Only the assigned customer can submit a project top-up notification." } });
+  const projectId = routeParam(req, "id");
+  const project = await prisma.project.findFirst({ where: { id: projectId, customerId: req.user!.id }, select: { id: true } });
+  if (!project) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const body = topUpRequestSchema.parse(req.body);
+  let request;
+  try {
+    request = await prisma.$transaction(async tx => {
+      const created = await tx.topUpRequest.create({ data: {
+        projectId, requestedById: req.user!.id, amount: body.amount, paymentMode: body.paymentMode,
+        reference: body.reference, notes: body.notes
+      } });
+      await audit(tx, req.user!.id, "CUSTOMER_TOP_UP_SUBMITTED", "TopUpRequest", created.id, { projectId, amount: body.amount.toFixed(2), paymentMode: body.paymentMode });
+      return created;
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return res.status(409).json({ error: { code: "PAYMENT_REFERENCE_ALREADY_SUBMITTED", message: "This payment reference has already been submitted for this project." } });
+    }
+    throw error;
+  }
+  return res.status(201).json({ topUp: request, message: "Payment details submitted for reconciliation. Your project balance will update only after Finance verifies the receipt." });
+}));
+app.post("/api/top-ups/:id/reconcile", authenticate, allow(...financeRoles), asyncRoute(async (req, res) => {
+  const body = z.object({
+    decision: z.enum(["CONFIRM", "REJECT"]),
+    reason: z.string().trim().min(3).max(500).optional()
+  }).superRefine((value, ctx) => {
+    if (value.decision === "REJECT" && !value.reason) ctx.addIssue({ code: "custom", message: "A reason is required when rejecting a top-up.", path: ["reason"] });
+  }).parse(req.body);
+  const topUp = await prisma.topUpRequest.findUnique({ where: { id: routeParam(req, "id") } });
+  if (!topUp || !(await projectAccess(req.user!, topUp.projectId, "UPDATE"))) return res.status(404).json({ error: { code: "TOP_UP_NOT_FOUND", message: "Top-up request was not found." } });
+  const result = await prisma.$transaction(async tx => {
+    const claimed = await tx.topUpRequest.updateMany({
+      where: { id: topUp.id, status: TopUpRequestStatus.SUBMITTED },
+      data: { status: body.decision === "CONFIRM" ? TopUpRequestStatus.CONFIRMED : TopUpRequestStatus.REJECTED, reviewedById: req.user!.id, reviewedAt: new Date(), reviewReason: body.reason }
+    });
+    if (claimed.count !== 1) throw Object.assign(new Error("This top-up has already been reviewed."), { status: 409, code: "TOP_UP_ALREADY_REVIEWED" });
+    let ledgerEntry = null;
+    if (body.decision === "CONFIRM") {
+      const now = new Date();
+      ledgerEntry = await tx.ledgerEntry.create({ data: {
+        projectId: topUp.projectId, type: LedgerType.TOP_UP, status: LedgerStatus.POSTED,
+        amount: topUp.amount, description: "Customer project top-up — finance reconciled",
+        reference: topUp.reference, idempotencyKey: "top-up-request:" + topUp.id,
+        createdById: topUp.requestedById, approvedById: req.user!.id, approvedAt: now, postedAt: now
+      } });
+      await tx.topUpRequest.update({ where: { id: topUp.id }, data: { ledgerEntryId: ledgerEntry.id } });
+    }
+    await audit(tx, req.user!.id, body.decision === "CONFIRM" ? "CUSTOMER_TOP_UP_RECONCILED" : "CUSTOMER_TOP_UP_REJECTED", "TopUpRequest", topUp.id, {
+      projectId: topUp.projectId, amount: topUp.amount.toFixed(2), ledgerEntryId: ledgerEntry?.id, reason: body.reason
+    });
+    return { ledgerEntry };
+  });
+  return res.json({ topUp: { id: topUp.id, status: body.decision === "CONFIRM" ? TopUpRequestStatus.CONFIRMED : TopUpRequestStatus.REJECTED, ledgerEntryId: result.ledgerEntry?.id || null }, message: body.decision === "CONFIRM" ? "Payment reconciled and posted to the project ledger." : "Top-up request rejected with a recorded reason." });
+}));
+
 app.post("/api/projects/:id/commitments", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
   const body = z.object({ description: z.string().min(3).max(300), vendor: z.string().max(180).optional(), amount: z.number().positive(), reference: z.string().max(120).optional() }).parse(req.body);
   const projectId = routeParam(req, "id");

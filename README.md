@@ -7,7 +7,7 @@ Premium public website and project operations platform for Sanora Spaces.
 ## Current experience
 - `index.html`: responsive public website for PEB/factory sheds, warehouses, farm villas, plots, property listings and construction support.
 - `portal.html`: authenticated customer project workspace with live project, ledger, procurement, labour, site diary and customer-shareable document data.
-- `src/server.ts`: Express API for authentication, project access, estimates, ledger, procurement, labour, GPS site diary and private document operations.
+- `src/server.ts`: Express API for authentication, project access, estimates, ledger, procurement, labour, GPS site diary, private document operations and customer top-up reconciliation.
 - `prisma/schema.prisma`: PostgreSQL data model.
 - `vendor/app-skeleton`: pinned shared platform foundation for common authorization, workflow, audit, billing and related contracts.
 
@@ -23,7 +23,7 @@ Premium public website and project operations platform for Sanora Spaces.
 - Serve the static website from a local web server; the customer portal expects the API under same-origin `/api` by default. Set the `api-base-url` meta tag for a separate API host.
 
 ## Construction commercial model
-Sanora's construction execution model is based on actual project-specific material and labour costs, not a fixed turnkey price or fixed per-square-foot package. The initial plan-based estimate is indicative and must identify assumptions, quantities and rates. Customer top-ups are receipts, actual approved material and labour expenses are posted separately, and pending commitments remain distinct from available funds. See `docs/CONSTRUCTION-FUNDING-MODEL.md`.
+Sanora's construction execution model is based on actual project-specific material and labour costs, not a fixed turnkey price or fixed per-square-foot package. The initial plan-based estimate is indicative and must identify assumptions, quantities and rates. Customer top-ups are receipts, actual approved material and labour expenses are posted separately, and pending commitments remain distinct from available funds. See `docs/CONSTRUCTION-FUNDING-MODEL.md` and `docs/TOP-UP-RECONCILIATION.md`.
 
 ## Delivery status
 Implemented foundations include authentication and role permissions, project-scoped access, estimate and project ledger workflows, vendor/purchase orders/material receipts, labour records, GPS site diary, customer portal live-data integration and private object-storage upload/download URL workflows.

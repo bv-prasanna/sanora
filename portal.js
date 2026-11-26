@@ -6,6 +6,7 @@
   let token = sessionStorage.getItem(tokenKey);
   let currentUser = null;
   let projects = [];
+  let activeProjectId = null;
   const money = (value) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(Number(value || 0));
   const date = (value) => value ? new Intl.DateTimeFormat("en-IN", { dateStyle: "medium" }).format(new Date(value)) : "—";
   const titleCase = (value) => String(value || "—").toLowerCase().replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
@@ -51,6 +52,54 @@
     const container = $("#labourRecords"); container.replaceChildren();
     if (!records?.length) return empty(container, "No labour records have been submitted for this project.");
     records.slice(0, 6).forEach(item => row(container, "◷", item.workerName, titleCase(item.workType) + " · " + date(item.workDate) + " · " + titleCase(item.status), money(item.amount), false));
+  }
+  async function renderTopUps(projectId) {
+    const result = await api("/projects/" + encodeURIComponent(projectId) + "/top-ups");
+    const customerContainer = $("#topUpHistory");
+    customerContainer.replaceChildren();
+    const financeContainer = $("#financeTopUpHistory");
+    financeContainer.replaceChildren();
+    if (!result.topUps?.length) {
+      empty(customerContainer, "No top-up requests have been submitted yet.");
+      empty(financeContainer, "No top-up requests are awaiting or have completed reconciliation.");
+      return;
+    }
+    const finance = ["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role);
+    result.topUps.forEach(request => {
+      const status = titleCase(request.status);
+      const detail = [titleCase(request.paymentMode), request.reference, date(request.submittedAt), request.reviewReason].filter(Boolean).join(" · ");
+      if (currentUser?.role === "CUSTOMER") {
+        row(customerContainer, request.status === "CONFIRMED" ? "✓" : request.status === "REJECTED" ? "!" : "↻", status, detail, money(request.amount), request.status === "CONFIRMED");
+      }
+      if (finance) {
+        row(financeContainer, request.status === "CONFIRMED" ? "✓" : request.status === "REJECTED" ? "!" : "↻", status, (request.requestedBy?.name || "Customer") + " · " + detail, money(request.amount), request.status === "CONFIRMED");
+        if (request.status === "SUBMITTED") {
+          const line = financeContainer.lastElementChild;
+          const actions = window.document.createElement("div"); actions.className = "topup-actions";
+          const confirmButton = window.document.createElement("button"); confirmButton.type = "button"; confirmButton.textContent = "Confirm receipt";
+          const rejectButton = window.document.createElement("button"); rejectButton.type = "button"; rejectButton.textContent = "Reject";
+          confirmButton.addEventListener("click", async () => {
+            confirmButton.disabled = true;
+            try {
+              const response = await api("/top-ups/" + encodeURIComponent(request.id) + "/reconcile", { method: "POST", body: JSON.stringify({ decision: "CONFIRM" }) });
+              message("#dashboardMessage", response.message, "info"); await renderTopUps(projectId); await loadProject(projectId);
+            } catch (error) { message("#dashboardMessage", error.message, "error"); confirmButton.disabled = false; }
+          });
+          rejectButton.addEventListener("click", async () => {
+            const reason = window.prompt("Enter the reason for rejecting this top-up:");
+            if (!reason || reason.trim().length < 3) return;
+            rejectButton.disabled = true;
+            try {
+              const response = await api("/top-ups/" + encodeURIComponent(request.id) + "/reconcile", { method: "POST", body: JSON.stringify({ decision: "REJECT", reason: reason.trim() }) });
+              message("#dashboardMessage", response.message, "info"); await renderTopUps(projectId);
+            } catch (error) { message("#dashboardMessage", error.message, "error"); rejectButton.disabled = false; }
+          });
+          actions.append(confirmButton, rejectButton); line.append(actions);
+        }
+      }
+    });
+    if (currentUser?.role !== "CUSTOMER") empty(customerContainer, "Top-up submissions are available from the customer account.");
+    if (!finance) empty(financeContainer, "Finance reconciliation is available to authorised Finance users.");
   }
   async function renderDocuments(projectId) {
     const container = $("#projectDocuments");
@@ -115,6 +164,7 @@
     renderLabour(labour.labourRecords || []);
     renderSiteUpdates(updates.updates || []);
     renderDocuments(project.id).catch(error => empty($("#projectDocuments"), error.message));
+    renderTopUps(project.id).catch(error => empty($("#topUpHistory"), error.message));
     message("#dashboardMessage", ledger.note || "Account figures are calculated from posted ledger entries. Pending items remain separate.", "info");
   }
   async function loadProjects(preferredId) {
@@ -139,6 +189,7 @@
   }
   async function loadProject(projectId) {
     if (!projectId) return;
+    activeProjectId = projectId;
     message("#dashboardMessage", "Refreshing project information…", "info");
     const [projectResult, ledger, orders, labour, updates] = await Promise.all([
       api("/projects/" + encodeURIComponent(projectId)),
@@ -154,6 +205,8 @@
     setText("#userName", currentUser?.name || "Customer");
     setText("#userEmail", currentUser?.email || "");
     setText("#userInitials", initials(currentUser?.name));
+    $("#topUpPanel").hidden = currentUser?.role !== "CUSTOMER";
+    $("#financeTopUpPanel").hidden = !["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role);
     try { await loadProjects(); }
     catch (error) { message("#dashboardMessage", error.message, "error"); }
   }
@@ -177,6 +230,22 @@
   $("#projectSelect").addEventListener("change", async event => {
     try { await loadProject(event.target.value); }
     catch (error) { message("#dashboardMessage", error.message, "error"); }
+  });
+  $("#topUpForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!activeProjectId) return message("#topUpMessage", "Select a project before submitting a top-up.", "error");
+    const button = $("#topUpSubmit"); button.disabled = true; button.textContent = "Submitting…";
+    const form = new FormData(event.currentTarget);
+    try {
+      const result = await api("/projects/" + encodeURIComponent(activeProjectId) + "/top-ups", {
+        method: "POST",
+        body: JSON.stringify({ amount: String(form.get("amount")), paymentMode: form.get("paymentMode"), reference: form.get("reference"), notes: form.get("notes") || undefined })
+      });
+      message("#topUpMessage", result.message || "Top-up request submitted for verification.", "info");
+      event.currentTarget.reset();
+      await renderTopUps(activeProjectId);
+    } catch (error) { message("#topUpMessage", error.message, "error"); }
+    finally { button.disabled = false; button.textContent = "Submit for reconciliation"; }
   });
   $("#logoutButton").addEventListener("click", () => signOut());
   $("#year").textContent = new Date().getFullYear();

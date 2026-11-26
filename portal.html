@@ -72,6 +72,18 @@
         <section class="panel" id="procurement"><div class="panel-head"><div><span class="eyebrow">MATERIALS & PROCUREMENT</span><h3>Purchase orders</h3></div></div><div id="purchaseOrders" class="empty-state">Loading procurement activity…</div></section>
       </div>
       <div class="content-grid">
+        <section class="panel" id="topUpPanel">
+          <div class="panel-head"><div><span class="eyebrow">PROJECT FUNDING</span><h3>Submit a top-up</h3></div><span class="live-label">FINANCE VERIFIED</span></div>
+          <p class="panel-note">If you have transferred funds, submit the payment details here. This is a reconciliation request, not an instant balance update. Your available balance changes only after Finance verifies the receipt.</p>
+          <form id="topUpForm" class="topup-form">
+            <label for="topUpAmount">Amount (INR)</label><input id="topUpAmount" name="amount" type="number" min="0.01" step="0.01" required placeholder="e.g. 50000">
+            <label for="topUpMode">Payment mode</label><select id="topUpMode" name="paymentMode"><option value="UPI">UPI</option><option value="BANK_TRANSFER">Bank transfer / NEFT / RTGS</option><option value="CHEQUE">Cheque</option><option value="CASH">Cash</option><option value="OTHER">Other</option></select>
+            <label for="topUpReference">Transaction reference / UTR</label><input id="topUpReference" name="reference" type="text" minlength="3" maxlength="120" required placeholder="Enter UTR or payment reference">
+            <label for="topUpNotes">Notes (optional)</label><textarea id="topUpNotes" name="notes" rows="2" maxlength="500" placeholder="Any additional payment details"></textarea>
+            <button type="submit" id="topUpSubmit">Submit for reconciliation</button><p id="topUpMessage" class="form-message" role="status" aria-live="polite"></p>
+          </form>
+          <div class="topup-history"><h4>Top-up requests</h4><div id="topUpHistory" class="empty-state">Loading top-up requests…</div></div>
+        </section>
         <section class="panel" id="labour"><div class="panel-head"><div><span class="eyebrow">SITE OPERATIONS</span><h3>Labour records</h3></div></div><div id="labourRecords" class="empty-state">Loading labour records…</div></section>
         <section class="panel" id="siteUpdates"><div class="panel-head"><div><span class="eyebrow">SITE DIARY</span><h3>Recent site updates</h3></div><span class="live-label">GPS WHEN AVAILABLE</span></div><div id="siteUpdateList" class="empty-state">Loading site updates…</div></section>
       </div>

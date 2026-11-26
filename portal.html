@@ -233,7 +233,17 @@
           <div id="milestoneList" class="milestone-list empty-state">Loading milestones…</div>
           <div class="task-list-wrap"><h4>Visible work items</h4><div id="taskList" class="empty-state">Loading project tasks…</div></div>
         </section>
-        <section class="panel" id="documents"><div class="panel-head"><div><span class="eyebrow">DOCUMENT CENTRE</span><h3>Project documents</h3></div></div><div id="projectDocuments" class="empty-state">Loading approved project documents…</div></section>
+        <section class="panel" id="documents">
+          <div class="panel-head"><div><span class="eyebrow">DOCUMENT CENTRE</span><h3>Project documents</h3></div><span class="live-label">PRIVATE STORAGE</span></div>
+          <form id="documentUploadForm" class="document-upload-form" hidden>
+            <label for="documentCategory">Document category</label><select id="documentCategory" name="category"><option value="DRAWING">Drawing</option><option value="APPROVAL">Approval</option><option value="INVOICE">Invoice</option><option value="PAYMENT_PROOF">Payment proof</option><option value="MATERIAL_RECEIPT">Material receipt</option><option value="LABOUR_EVIDENCE">Labour evidence</option><option value="AGREEMENT">Agreement</option><option value="OTHER">Other</option></select>
+            <label for="documentDescription">Description (optional)</label><input id="documentDescription" name="description" maxlength="500" placeholder="Short document description">
+            <label for="documentFile">Choose file (PDF, image, DOCX or XLSX · max 15 MiB)</label><input id="documentFile" name="file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+            <label class="inline-check" id="documentVisibilityLabel"><input id="documentCustomerVisible" type="checkbox"> Make available to customer</label>
+            <button type="submit" id="documentUploadButton">Upload document</button><p id="documentUploadMessage" class="form-message" role="status" aria-live="polite"></p>
+          </form>
+          <div id="projectDocuments" class="document-list empty-state">Loading project documents…</div>
+        </section>
       </div>
       <footer>© <span id="year"></span> Sanora Spaces <span>Customer workspace · Secure sign-in required</span><a href="index.html">Back to website ↗</a></footer>
     </div>

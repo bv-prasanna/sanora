@@ -40,3 +40,11 @@ This storage feature does not itself approve invoices, reconcile customer funds 
 
 
 Site diary photo uploads must include the project update ID. Publishing or unpublishing a site diary entry synchronises the visibility of its linked site photos. The customer update API filters unpublished diary entries and photos at query time.
+
+
+## Portal document centre
+The staff/customer portal lists available project documents from the authenticated documents API. Staff with project UPDATE access can upload one PDF, image, DOC/DOCX or XLSX file (up to 15 MiB) per submission. The server issues a short-lived private upload URL, verifies object size/content type/metadata on completion, and keeps the document unavailable until verification succeeds.
+
+Documents are internal by default. Project managers can publish or make documents internal from the portal. Customers see only published documents; signed download URLs expire after three minutes and each link creation is audited. Site photos remain linked to their site diary update and also follow the update's customer visibility.
+
+The current UI downloads documents rather than rendering arbitrary office/PDF content inline. File-signature validation, malware scanning/quarantine and content-disarm controls are still required before production use.

@@ -106,6 +106,7 @@
       empty($("#transactions"), "Your project account will appear here when a project is assigned to your account.");
       empty($("#purchaseOrders"), "No project has been assigned.");
       empty($("#labourRecords"), "No project has been assigned.");
+      empty($("#siteUpdateList"), "No project has been assigned.");
       return;
     }
     projects.forEach(project => { const option = document.createElement("option"); option.value = project.id; option.textContent = project.name + " · " + project.code; select.append(option); });
@@ -116,7 +117,7 @@
   async function loadProject(projectId) {
     if (!projectId) return;
     message("#dashboardMessage", "Refreshing project information…", "info");
-    const [projectResult, ledger, orders, labour] = await Promise.all([
+    const [projectResult, ledger, orders, labour, updates] = await Promise.all([
       api("/projects/" + encodeURIComponent(projectId)),
       api("/projects/" + encodeURIComponent(projectId) + "/ledger"),
       api("/projects/" + encodeURIComponent(projectId) + "/purchase-orders"),

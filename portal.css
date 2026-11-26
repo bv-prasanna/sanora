@@ -27,3 +27,6 @@
 .finance-queue-group{padding:12px 0;border-top:1px solid #eceee8}.finance-queue-group h4{font:700 11px Manrope;margin:0 0 7px;color:#445448}.finance-queue-group .transaction{flex-wrap:wrap}.finance-queue-group .task-action{margin-left:auto}#financeQueuePanel[hidden]{display:none!important}
 
 .portal-brandbar .pwa-install-button{margin-left:auto;border:1px solid #d8ddd4;background:#fff;color:#49634f;padding:8px 12px;font:600 9px "DM Sans";cursor:pointer}.portal-brandbar .pwa-install-button[hidden]{display:none!important}
+
+.portal-brandbar .pwa-status{font-size:8px;color:#899188;max-width:180px}.portal-brandbar .pwa-install-button{white-space:nowrap}
+@media(max-width:650px){.portal-brandbar .pwa-status{display:none}.portal-brandbar .pwa-install-button{padding:7px 9px;font-size:8px}}

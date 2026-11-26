@@ -235,12 +235,11 @@ const ledgerSchema = z.object({
 app.post("/api/projects/:id/ledger", authenticate, asyncRoute(async (req, res) => {
   const body = ledgerSchema.parse(req.body);
   const projectId = routeParam(req, "id");
-  if (req.user!.role === UserRole.CUSTOMER && body.type === "TOP_UP") {
-    return res.status(409).json({ error: { code: "USE_TOP_UP_RECONCILIATION", message: "Please submit customer payments through the project top-up reconciliation workflow." } });
+  if (body.type === "TOP_UP") {
+    return res.status(409).json({ error: { code: "USE_TOP_UP_RECONCILIATION", message: "Top-ups must be created through the customer submission and finance reconciliation workflow." } });
   }
   if (!(await projectAccess(req.user!, projectId, req.user!.role === UserRole.CUSTOMER ? "VIEW" : "UPDATE"))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   if (req.user!.role === UserRole.CUSTOMER && body.type !== "TOP_UP") return res.status(403).json({ error: { code: "CUSTOMER_LEDGER_RESTRICTED", message: "Customers can submit top-up receipts. Expense entries are recorded by authorised project staff." } });
-  if (body.type === "TOP_UP" && !([...financeRoles, UserRole.CUSTOMER] as UserRole[]).includes(req.user!.role)) return res.status(403).json({ error: { code: "TOP_UP_ROLE_REQUIRED", message: "Only customers or finance staff can record a top-up receipt." } });
   if (body.type === "REFUND" && !financeRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "FINANCE_APPROVAL_REQUIRED", message: "Only finance-authorised users can submit project refunds." } });
   if (body.type !== "TOP_UP" && !expenseRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "STAFF_ROLE_REQUIRED", message: "Only authorised project or finance staff can submit expenses." } });
   const key = req.header("Idempotency-Key");
@@ -323,16 +322,22 @@ app.post("/api/projects/:id/top-ups", authenticate, asyncRoute(async (req, res) 
   const project = await prisma.project.findFirst({ where: { id: projectId, customerId: req.user!.id }, select: { id: true } });
   if (!project) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   const body = topUpRequestSchema.parse(req.body);
-  const duplicate = await prisma.topUpRequest.findFirst({ where: { projectId, reference: body.reference } });
-  if (duplicate) return res.status(409).json({ error: { code: "PAYMENT_REFERENCE_ALREADY_SUBMITTED", message: "This payment reference has already been submitted for this project." } });
-  const request = await prisma.$transaction(async tx => {
-    const created = await tx.topUpRequest.create({ data: {
-      projectId, requestedById: req.user!.id, amount: body.amount, paymentMode: body.paymentMode,
-      reference: body.reference, notes: body.notes
-    } });
-    await audit(tx, req.user!.id, "CUSTOMER_TOP_UP_SUBMITTED", "TopUpRequest", created.id, { projectId, amount: body.amount.toFixed(2), paymentMode: body.paymentMode });
-    return created;
-  });
+  let request;
+  try {
+    request = await prisma.$transaction(async tx => {
+      const created = await tx.topUpRequest.create({ data: {
+        projectId, requestedById: req.user!.id, amount: body.amount, paymentMode: body.paymentMode,
+        reference: body.reference, notes: body.notes
+      } });
+      await audit(tx, req.user!.id, "CUSTOMER_TOP_UP_SUBMITTED", "TopUpRequest", created.id, { projectId, amount: body.amount.toFixed(2), paymentMode: body.paymentMode });
+      return created;
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return res.status(409).json({ error: { code: "PAYMENT_REFERENCE_ALREADY_SUBMITTED", message: "This payment reference has already been submitted for this project." } });
+    }
+    throw error;
+  }
   return res.status(201).json({ topUp: request, message: "Payment details submitted for reconciliation. Your project balance will update only after Finance verifies the receipt." });
 }));
 app.post("/api/top-ups/:id/reconcile", authenticate, allow(...financeRoles), asyncRoute(async (req, res) => {

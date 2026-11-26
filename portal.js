@@ -632,7 +632,7 @@
       const result = await api("/customer-invitations", { method: "POST", body: JSON.stringify({
         name: form.get("name"), email: form.get("email"), phone: form.get("phone") || undefined
       }) });
-      $("#invitationUrl").value = result.invitationUrl;
+      $("#invitationUrl").value = /^https?:\\/\\//i.test(result.invitationUrl) ? result.invitationUrl : (window.location.origin + result.invitationUrl);
       $("#invitationResult").hidden = false;
       message("#customerInviteMessage", result.message, "info");
       formElement.reset();

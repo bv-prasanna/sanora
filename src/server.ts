@@ -141,7 +141,7 @@ app.post("/api/public/enquiries", enquiryLimiter, asyncRoute(async (req, res) =>
       phone: body.phone, interest: body.interest, message: body.message, source: "WEBSITE"
     } });
     const recipients = await tx.user.findMany({
-      where: { active: true, role: { in: [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER, UserRole.SALES] } },
+      where: { active: true, role: { in: [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.SALES] } },
       select: { id: true }
     });
     if (recipients.length) await tx.notification.createMany({ data: recipients.map(user => ({

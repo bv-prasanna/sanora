@@ -662,7 +662,7 @@ app.get("/api/operations/summary", authenticate, asyncRoute(async (req, res) => 
     prisma.projectTask.count({ where: { projectId: { in: projectIds }, status: ProjectTaskStatus.BLOCKED } }),
     prisma.projectTask.count({ where: { projectId: { in: projectIds }, dueDate: { lt: now }, status: { in: [ProjectTaskStatus.TODO, ProjectTaskStatus.IN_PROGRESS, ProjectTaskStatus.BLOCKED, ProjectTaskStatus.IN_REVIEW] } } })
   ]);
-  const activeProjects = projects.filter(project => ![ProjectStatus.COMPLETED, ProjectStatus.CANCELLED].includes(project.status)).length;
+  const activeProjects = projects.filter(project => project.status !== ProjectStatus.COMPLETED && project.status !== ProjectStatus.CANCELLED).length;
   return res.json({
     summary: {
       totalProjects: projects.length, activeProjects, pendingTopUps, pendingExpenseReviews,

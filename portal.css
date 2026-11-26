@@ -30,3 +30,5 @@
 
 .portal-brandbar .pwa-status{font-size:8px;color:#899188;max-width:180px}.portal-brandbar .pwa-install-button{white-space:nowrap}
 @media(max-width:650px){.portal-brandbar .pwa-status{display:none}.portal-brandbar .pwa-install-button{padding:7px 9px;font-size:8px}}
+
+.account-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0 16px;padding:12px 14px;background:#fff;border:1px solid #e9ece5}.account-actions p{flex:1;min-width:220px;margin:0;color:#7e887e;font-size:9px;line-height:1.7}.account-actions .secondary-action{white-space:nowrap}.account-actions .form-message{min-width:100px;margin:0!important}

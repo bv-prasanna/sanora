@@ -228,8 +228,11 @@ app.post("/api/public/customer-invitations/accept", invitationLimiter, asyncRout
   if (!invitation || invitation.user.active || invitation.user.role !== UserRole.CUSTOMER) return res.status(400).json({ error: { code: "INVITATION_INVALID_OR_EXPIRED", message: "This invitation is invalid, expired or already used. Contact the Sanora team for a new invitation." } });
   const passwordHash = await bcrypt.hash(body.password, 12);
   await prisma.$transaction(async tx => {
-    await tx.user.update({ where: { id: invitation.userId }, data: { passwordHash, active: true } });
-    await tx.customerInvitation.update({ where: { id: invitation.id }, data: { acceptedAt: new Date() } });
+    const acceptedAt = new Date();
+    const claimed = await tx.customerInvitation.updateMany({ where: { id: invitation.id, acceptedAt: null, expiresAt: { gt: acceptedAt } }, data: { acceptedAt } });
+    if (!claimed.count) throw Object.assign(new Error("This invitation has already been used or expired."), { status: 409, code: "INVITATION_ALREADY_USED" });
+    const activated = await tx.user.updateMany({ where: { id: invitation.userId, active: false, role: UserRole.CUSTOMER }, data: { passwordHash, active: true } });
+    if (!activated.count) throw Object.assign(new Error("This customer account is already active. Please sign in."), { status: 409, code: "CUSTOMER_ALREADY_ACTIVE" });
     await audit(tx, invitation.userId, "CUSTOMER_ACCOUNT_ACTIVATED", "User", invitation.userId, { invitationId: invitation.id });
     if (invitation.invitedById !== invitation.userId) await notify(tx, {
       recipientId: invitation.invitedById, actorId: invitation.userId, type: NotificationType.GENERAL,
@@ -240,7 +243,7 @@ app.post("/api/public/customer-invitations/accept", invitationLimiter, asyncRout
   return res.json({ message: "Your Sanora customer account is active. You can now sign in." });
 }));
 
-app.post("/api/projects", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
+app.post("/api/projects", authenticate, allow(...customerAdminRoles), asyncRoute(async (req, res) => {
   const body = z.object({ name: z.string().min(2).max(120), customerId: z.string().uuid(), location: z.string().max(180).optional(), description: z.string().max(2000).optional() }).parse(req.body);
   const customer = await prisma.user.findFirst({ where: { id: body.customerId, role: UserRole.CUSTOMER, active: true }, select: { id: true } });
   if (!customer) return res.status(400).json({ error: { code: "ACTIVE_CUSTOMER_REQUIRED", message: "Select a customer who has activated their account." } });

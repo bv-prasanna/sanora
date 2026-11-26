@@ -52,6 +52,28 @@
     if (!records?.length) return empty(container, "No labour records have been submitted for this project.");
     records.slice(0, 6).forEach(item => row(container, "◷", item.workerName, titleCase(item.workType) + " · " + date(item.workDate) + " · " + titleCase(item.status), money(item.amount), false));
   }
+  async function renderDocuments(projectId) {
+    const container = $("#projectDocuments");
+    const result = await api("/projects/" + encodeURIComponent(projectId) + "/documents");
+    container.replaceChildren();
+    if (!result.documents?.length) return empty(container, "No customer-shareable project documents have been published yet.");
+    result.documents.forEach(document => {
+      const item = document.createElement ? document : document;
+      const line = window.document.createElement("div"); line.className = "document-row";
+      const info = window.document.createElement("div");
+      const name = window.document.createElement("b"); name.textContent = document.originalName;
+      const meta = window.document.createElement("small"); meta.textContent = titleCase(document.category) + " · " + date(document.availableAt || document.createdAt) + " · " + Math.max(1, Math.round(document.sizeBytes / 1024)) + " KB";
+      info.append(name, meta);
+      const link = window.document.createElement("button"); link.type = "button"; link.textContent = "Download";
+      link.addEventListener("click", async () => {
+        link.disabled = true; link.textContent = "Preparing…";
+        try { const signed = await api("/documents/" + encodeURIComponent(document.id) + "/download-url", { method: "POST", body: "{}" }); window.open(signed.downloadUrl, "_blank", "noopener"); }
+        catch (error) { message("#dashboardMessage", error.message, "error"); }
+        finally { link.disabled = false; link.textContent = "Download"; }
+      });
+      line.append(info, link); container.append(line);
+    });
+  }
   function renderSiteUpdates(updates) {
     const container = $("#siteUpdateList"); container.replaceChildren();
     if (!updates?.length) return empty(container, "No site updates have been recorded for this project yet.");
@@ -93,6 +115,7 @@
     renderOrders(orders.purchaseOrders || []);
     renderLabour(labour.labourRecords || []);
     renderSiteUpdates(updates.updates || []);
+    renderDocuments(project.id).catch(error => empty($("#projectDocuments"), error.message));
     message("#dashboardMessage", ledger.note || "Account figures are calculated from posted ledger entries. Pending items remain separate.", "info");
   }
   async function loadProjects(preferredId) {
@@ -107,6 +130,7 @@
       empty($("#purchaseOrders"), "No project has been assigned.");
       empty($("#labourRecords"), "No project has been assigned.");
       empty($("#siteUpdateList"), "No project has been assigned.");
+      empty($("#projectDocuments"), "No project has been assigned.");
       return;
     }
     projects.forEach(project => { const option = document.createElement("option"); option.value = project.id; option.textContent = project.name + " · " + project.code; select.append(option); });

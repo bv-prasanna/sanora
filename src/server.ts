@@ -8,7 +8,7 @@ import jwt from "jsonwebtoken";
 import { Prisma, PrismaClient, UserRole, LedgerType, LedgerStatus, EstimateStatus } from "@prisma/client";
 import { z, ZodError } from "zod";
 import { randomUUID } from "node:crypto";
-import { calculateProjectBalance } from "./domain/ledger-balance.js";
+import { calculateProjectBalance, type PostedLedgerLine } from "./domain/ledger-balance.js";
 import { hasSanoraPermission, redactAuditMetadata, estimateProjectTotal, validateProjectTransition } from "./skeleton/policies.mjs";
 
 const prisma = new PrismaClient();
@@ -243,7 +243,7 @@ app.get("/api/projects/:id/ledger", authenticate, asyncRoute(async (req, res) =>
     prisma.ledgerEntry.findMany({ where: { projectId, status: LedgerStatus.POSTED }, orderBy: { postedAt: "desc" } }),
     prisma.commitment.findMany({ where: { projectId, status: { in: ["OPEN", "PARTIALLY_FULFILLED"] } } })
   ]);
-  const summary = calculateProjectBalance(entries.filter(e => e.type !== LedgerType.REVERSAL).map(e => ({ type: e.type as Exclude<LedgerType, LedgerType.REVERSAL>, amount: e.amount })), commitments);
+  const summary = calculateProjectBalance(entries.filter(e => e.type !== LedgerType.REVERSAL).map(e => ({ type: e.type as PostedLedgerLine["type"], amount: e.amount })), commitments);
   return res.json({ entries, summary: { currency: "INR", ...summary }, note: "Only posted ledger entries affect actual balances. Pending commitments are shown separately and are not double-deducted from actual expenses." });
 }));
 app.post("/api/projects/:id/commitments", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {

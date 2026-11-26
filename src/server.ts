@@ -886,7 +886,7 @@ app.patch("/api/tasks/:id", authenticate, allow(...planningRoles), asyncRoute(as
     try { validateTaskTransition(current.status, body.status, req.user!.id, true); }
     catch { return res.status(409).json({ error: { code: "INVALID_TASK_TRANSITION", message: "This task cannot move from " + current.status + " to " + body.status + "." } }); }
   }
-  if ([ProjectTaskStatus.IN_PROGRESS, ProjectTaskStatus.IN_REVIEW, ProjectTaskStatus.COMPLETED].includes(nextStatus)) {
+  if (nextStatus === ProjectTaskStatus.IN_PROGRESS || nextStatus === ProjectTaskStatus.IN_REVIEW || nextStatus === ProjectTaskStatus.COMPLETED) {
     const incomplete = current.blockedBy.filter(link => link.predecessor.status !== ProjectTaskStatus.COMPLETED && link.predecessor.status !== ProjectTaskStatus.CANCELLED);
     if (incomplete.length) return res.status(409).json({ error: { code: "TASK_DEPENDENCIES_INCOMPLETE", message: "Complete prerequisite tasks before starting, reviewing or completing this task.", blockers: incomplete.map(link => ({ id: link.predecessor.id, title: link.predecessor.title })) } });
   }

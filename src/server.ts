@@ -5,13 +5,13 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { Prisma, PrismaClient, UserRole, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory, ProjectDocumentCategory, ProjectDocumentStatus, TopUpRequestStatus } from "@prisma/client";
+import { Prisma, PrismaClient, UserRole, LedgerType, LedgerStatus, EstimateStatus, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory, ProjectDocumentCategory, ProjectDocumentStatus, TopUpRequestStatus, ProjectMilestoneStatus, ProjectTaskStatus, ProjectTaskPriority } from "@prisma/client";
 import { z, ZodError } from "zod";
 import { randomUUID } from "node:crypto";
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { calculateProjectBalance, type PostedLedgerLine } from "./domain/ledger-balance.js";
-import { hasSanoraPermission, redactAuditMetadata, estimateProjectTotal, validateProjectTransition } from "./skeleton/policies.mjs";
+import { hasSanoraPermission, redactAuditMetadata, estimateProjectTotal, validateProjectTransition, validateTaskTransition, validateMilestoneTransition } from "./skeleton/policies.mjs";
 
 const prisma = new PrismaClient();
 const app = express();
@@ -703,6 +703,209 @@ app.post("/api/documents/:id/customer-visibility", authenticate, allow(UserRole.
     return saved;
   });
   return res.json({ document: { id: updated.id, customerVisible: updated.customerVisible }, message: body.customerVisible ? "Document is now available to the customer." : "Document is now internal only." });
+}));
+
+
+const planningRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER, UserRole.SITE_ENGINEER];
+const milestoneCreateSchema = z.object({
+  title: z.string().trim().min(3).max(160),
+  description: z.string().trim().max(1200).optional(),
+  targetDate: z.string().datetime().optional(),
+  forecastDate: z.string().datetime().optional(),
+  sequence: z.number().int().min(0).max(10000).optional(),
+  customerVisible: z.boolean().default(false)
+}).superRefine((value, ctx) => {
+  if (value.targetDate && value.forecastDate && new Date(value.forecastDate) < new Date(value.targetDate)) ctx.addIssue({ code: "custom", message: "Forecast date cannot be earlier than the target date.", path: ["forecastDate"] });
+});
+const taskCreateSchema = z.object({
+  title: z.string().trim().min(3).max(160),
+  description: z.string().trim().max(2000).optional(),
+  workPackage: z.string().trim().max(120).optional(),
+  milestoneId: z.string().uuid().optional(),
+  assignedToId: z.string().uuid().optional(),
+  priority: z.nativeEnum(ProjectTaskPriority).default(ProjectTaskPriority.MEDIUM),
+  startDate: z.string().datetime().optional(),
+  dueDate: z.string().datetime().optional(),
+  customerVisible: z.boolean().default(false),
+  dependsOnIds: z.array(z.string().uuid()).max(20).default([])
+}).superRefine((value, ctx) => {
+  if (value.startDate && value.dueDate && new Date(value.dueDate) < new Date(value.startDate)) ctx.addIssue({ code: "custom", message: "Due date cannot be earlier than the start date.", path: ["dueDate"] });
+  if (new Set(value.dependsOnIds).size !== value.dependsOnIds.length) ctx.addIssue({ code: "custom", message: "A task dependency can be selected only once.", path: ["dependsOnIds"] });
+});
+async function validateTaskAssignee(projectId: string, userId: string) {
+  const assignee = await prisma.user.findFirst({ where: { id: userId, active: true, role: { not: UserRole.CUSTOMER } }, select: { id: true, name: true, role: true } });
+  if (!assignee) return null;
+  const project = await prisma.project.findUnique({ where: { id: projectId }, select: { createdById: true } });
+  if (project?.createdById === userId) return assignee;
+  const membership = await prisma.projectMember.findFirst({ where: { projectId, userId, access: { in: ["UPDATE", "MANAGE"] } }, select: { id: true } });
+  return membership ? assignee : null;
+}
+app.get("/api/projects/:id/members", authenticate, asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  if (!planningRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "STAFF_DIRECTORY_RESTRICTED", message: "Only assigned project staff can view the project assignment list." } });
+  const [project, memberships] = await Promise.all([
+    prisma.project.findUnique({ where: { id: projectId }, include: { createdBy: { select: { id: true, name: true, role: true, active: true } } } }),
+    prisma.projectMember.findMany({ where: { projectId, user: { active: true, role: { not: UserRole.CUSTOMER } } }, include: { user: { select: { id: true, name: true, role: true } } } })
+  ]);
+  const staff = new Map<string, { id: string; name: string; role: UserRole }>();
+  if (project?.createdBy.active && project.createdBy.role !== UserRole.CUSTOMER) staff.set(project.createdBy.id, { id: project.createdBy.id, name: project.createdBy.name, role: project.createdBy.role });
+  memberships.forEach(member => staff.set(member.user.id, member.user));
+  return res.json({ members: [...staff.values()] });
+}));
+app.get("/api/projects/:id/work-plan", authenticate, asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const customer = req.user!.role === UserRole.CUSTOMER;
+  const [milestones, tasks] = await Promise.all([
+    prisma.projectMilestone.findMany({
+      where: { projectId, ...(customer ? { customerVisible: true } : {}) },
+      orderBy: [{ sequence: "asc" }, { targetDate: "asc" }],
+      include: { _count: { select: { tasks: customer ? { where: { customerVisible: true } } : true } } }
+    }),
+    prisma.projectTask.findMany({
+      where: { projectId, ...(customer ? { customerVisible: true } : {}) },
+      orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }],
+      include: {
+        assignedTo: { select: { id: true, name: true, role: true } },
+        ...(customer ? {} : { blockedBy: { include: { predecessor: { select: { id: true, title: true, status: true } } } } })
+      }
+    })
+  ]);
+  const activeTasks = tasks.filter(task => task.status !== ProjectTaskStatus.CANCELLED);
+  const progressPercent = activeTasks.length ? Math.round(activeTasks.reduce((sum, task) => sum + task.progressPercent, 0) / activeTasks.length) : 0;
+  return res.json({
+    milestones, tasks,
+    summary: {
+      progressPercent,
+      totalTasks: activeTasks.length,
+      completedTasks: activeTasks.filter(task => task.status === ProjectTaskStatus.COMPLETED).length,
+      blockedTasks: activeTasks.filter(task => task.status === ProjectTaskStatus.BLOCKED).length
+    }
+  });
+}));
+app.post("/api/projects/:id/milestones", authenticate, allow(...planningRoles), asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId, "UPDATE"))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const body = milestoneCreateSchema.parse(req.body);
+  if (body.customerVisible && !(await projectAccess(req.user!, projectId, "MANAGE"))) return res.status(403).json({ error: { code: "MILESTONE_VISIBILITY_REQUIRES_MANAGER", message: "Only a project manager can publish milestones to the customer portal." } });
+  const milestone = await prisma.$transaction(async tx => {
+    const created = await tx.projectMilestone.create({ data: {
+      projectId, title: body.title, description: body.description,
+      targetDate: body.targetDate ? new Date(body.targetDate) : undefined,
+      forecastDate: body.forecastDate ? new Date(body.forecastDate) : undefined,
+      sequence: body.sequence, customerVisible: body.customerVisible, createdById: req.user!.id
+    } });
+    await audit(tx, req.user!.id, "PROJECT_MILESTONE_CREATED", "ProjectMilestone", created.id, { projectId, title: body.title });
+    return created;
+  });
+  return res.status(201).json({ milestone, message: "Project milestone created." });
+}));
+app.patch("/api/milestones/:id", authenticate, allow(...planningRoles), asyncRoute(async (req, res) => {
+  const id = routeParam(req, "id");
+  const current = await prisma.projectMilestone.findUnique({ where: { id } });
+  if (!current || !(await projectAccess(req.user!, current.projectId, "UPDATE"))) return res.status(404).json({ error: { code: "MILESTONE_NOT_FOUND", message: "Milestone was not found." } });
+  const body = z.object({
+    title: z.string().trim().min(3).max(160).optional(),
+    description: z.string().trim().max(1200).nullable().optional(),
+    status: z.nativeEnum(ProjectMilestoneStatus).optional(),
+    targetDate: z.string().datetime().nullable().optional(),
+    forecastDate: z.string().datetime().nullable().optional(),
+    sequence: z.number().int().min(0).max(10000).optional(),
+    customerVisible: z.boolean().optional()
+  }).parse(req.body);
+  if (body.customerVisible !== undefined && !(await projectAccess(req.user!, current.projectId, "MANAGE"))) return res.status(403).json({ error: { code: "MILESTONE_VISIBILITY_REQUIRES_MANAGER", message: "Only a project manager can change customer visibility." } });
+  if (body.status && body.status !== current.status) {
+    try { validateMilestoneTransition(current.status, body.status, req.user!.id, true); }
+    catch { return res.status(409).json({ error: { code: "INVALID_MILESTONE_TRANSITION", message: "This milestone cannot move from " + current.status + " to " + body.status + "." } }); }
+  }
+  if (body.status === ProjectMilestoneStatus.COMPLETED) {
+    const unfinished = await prisma.projectTask.count({ where: { milestoneId: id, status: { notIn: [ProjectTaskStatus.COMPLETED, ProjectTaskStatus.CANCELLED] } } });
+    if (unfinished > 0) return res.status(409).json({ error: { code: "MILESTONE_TASKS_INCOMPLETE", message: "Complete or cancel all milestone tasks before completing this milestone." } });
+  }
+  const updated = await prisma.$transaction(async tx => {
+    const saved = await tx.projectMilestone.update({ where: { id }, data: {
+      ...body,
+      targetDate: body.targetDate === undefined ? undefined : body.targetDate === null ? null : new Date(body.targetDate),
+      forecastDate: body.forecastDate === undefined ? undefined : body.forecastDate === null ? null : new Date(body.forecastDate),
+      completedAt: body.status === ProjectMilestoneStatus.COMPLETED ? new Date() : body.status ? null : undefined
+    } });
+    await audit(tx, req.user!.id, "PROJECT_MILESTONE_UPDATED", "ProjectMilestone", id, { projectId: current.projectId, changes: Object.keys(body) });
+    return saved;
+  });
+  return res.json({ milestone: updated, message: "Milestone updated." });
+}));
+app.post("/api/projects/:id/tasks", authenticate, allow(...planningRoles), asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId, "UPDATE"))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const body = taskCreateSchema.parse(req.body);
+  if (body.customerVisible && !(await projectAccess(req.user!, projectId, "MANAGE"))) return res.status(403).json({ error: { code: "TASK_VISIBILITY_REQUIRES_MANAGER", message: "Only a project manager can publish tasks to the customer portal." } });
+  if (body.milestoneId) {
+    const milestone = await prisma.projectMilestone.findFirst({ where: { id: body.milestoneId, projectId }, select: { id: true } });
+    if (!milestone) return res.status(400).json({ error: { code: "MILESTONE_PROJECT_MISMATCH", message: "Select a milestone from this project." } });
+  }
+  if (body.assignedToId && !(await validateTaskAssignee(projectId, body.assignedToId))) return res.status(400).json({ error: { code: "INVALID_TASK_ASSIGNEE", message: "Assignee must be an active staff member assigned to this project." } });
+  if (body.dependsOnIds.length) {
+    const predecessors = await prisma.projectTask.findMany({ where: { id: { in: body.dependsOnIds }, projectId }, select: { id: true } });
+    if (predecessors.length !== body.dependsOnIds.length) return res.status(400).json({ error: { code: "INVALID_TASK_DEPENDENCY", message: "All dependencies must be different tasks from the same project." } });
+  }
+  const task = await prisma.$transaction(async tx => {
+    const created = await tx.projectTask.create({ data: {
+      projectId, milestoneId: body.milestoneId, title: body.title, description: body.description,
+      workPackage: body.workPackage, assignedToId: body.assignedToId, priority: body.priority,
+      startDate: body.startDate ? new Date(body.startDate) : undefined,
+      dueDate: body.dueDate ? new Date(body.dueDate) : undefined,
+      customerVisible: body.customerVisible, createdById: req.user!.id,
+      ...(body.dependsOnIds.length ? { blockedBy: { create: body.dependsOnIds.map(predecessorId => ({ predecessorId })) } } : {})
+    } });
+    await audit(tx, req.user!.id, "PROJECT_TASK_CREATED", "ProjectTask", created.id, { projectId, milestoneId: body.milestoneId, assignedToId: body.assignedToId, dependsOn: body.dependsOnIds });
+    return created;
+  });
+  return res.status(201).json({ task, message: "Project task created and assigned." });
+}));
+app.patch("/api/tasks/:id", authenticate, allow(...planningRoles), asyncRoute(async (req, res) => {
+  const id = routeParam(req, "id");
+  const current = await prisma.projectTask.findUnique({ where: { id }, include: { blockedBy: { include: { predecessor: { select: { id: true, title: true, status: true } } } } } });
+  if (!current || !(await projectAccess(req.user!, current.projectId, "UPDATE"))) return res.status(404).json({ error: { code: "TASK_NOT_FOUND", message: "Project task was not found." } });
+  const body = z.object({
+    title: z.string().trim().min(3).max(160).optional(),
+    description: z.string().trim().max(2000).nullable().optional(),
+    status: z.nativeEnum(ProjectTaskStatus).optional(),
+    priority: z.nativeEnum(ProjectTaskPriority).optional(),
+    progressPercent: z.number().int().min(0).max(100).optional(),
+    assignedToId: z.string().uuid().nullable().optional(),
+    startDate: z.string().datetime().nullable().optional(),
+    dueDate: z.string().datetime().nullable().optional(),
+    blockedReason: z.string().trim().min(3).max(500).nullable().optional(),
+    customerVisible: z.boolean().optional()
+  }).parse(req.body);
+  if (body.customerVisible !== undefined && !(await projectAccess(req.user!, current.projectId, "MANAGE"))) return res.status(403).json({ error: { code: "TASK_VISIBILITY_REQUIRES_MANAGER", message: "Only a project manager can change customer visibility." } });
+  if (body.assignedToId && !(await validateTaskAssignee(current.projectId, body.assignedToId))) return res.status(400).json({ error: { code: "INVALID_TASK_ASSIGNEE", message: "Assignee must be an active staff member assigned to this project." } });
+  const nextStatus = body.status || current.status;
+  if (body.status && body.status !== current.status) {
+    try { validateTaskTransition(current.status, body.status, req.user!.id, true); }
+    catch { return res.status(409).json({ error: { code: "INVALID_TASK_TRANSITION", message: "This task cannot move from " + current.status + " to " + body.status + "." } }); }
+  }
+  if (nextStatus === ProjectTaskStatus.IN_PROGRESS || nextStatus === ProjectTaskStatus.IN_REVIEW || nextStatus === ProjectTaskStatus.COMPLETED) {
+    const incomplete = current.blockedBy.filter(link => link.predecessor.status !== ProjectTaskStatus.COMPLETED && link.predecessor.status !== ProjectTaskStatus.CANCELLED);
+    if (incomplete.length) return res.status(409).json({ error: { code: "TASK_DEPENDENCIES_INCOMPLETE", message: "Complete prerequisite tasks before starting, reviewing or completing this task.", blockers: incomplete.map(link => ({ id: link.predecessor.id, title: link.predecessor.title })) } });
+  }
+  if (nextStatus === ProjectTaskStatus.BLOCKED && !(body.blockedReason || current.blockedReason)) return res.status(400).json({ error: { code: "BLOCK_REASON_REQUIRED", message: "Provide a reason when marking a task as blocked." } });
+  const progressPercent = nextStatus === ProjectTaskStatus.COMPLETED ? 100 : nextStatus === ProjectTaskStatus.TODO ? 0 : body.progressPercent ?? current.progressPercent;
+  const updated = await prisma.$transaction(async tx => {
+    const saved = await tx.projectTask.update({ where: { id }, data: {
+      title: body.title, description: body.description, status: body.status, priority: body.priority,
+      progressPercent, assignedToId: body.assignedToId,
+      startDate: body.startDate === undefined ? undefined : body.startDate === null ? null : new Date(body.startDate),
+      dueDate: body.dueDate === undefined ? undefined : body.dueDate === null ? null : new Date(body.dueDate),
+      blockedReason: nextStatus === ProjectTaskStatus.BLOCKED ? body.blockedReason ?? current.blockedReason : body.blockedReason ?? (body.status ? null : undefined),
+      customerVisible: body.customerVisible,
+      completedAt: nextStatus === ProjectTaskStatus.COMPLETED ? new Date() : body.status ? null : undefined
+    } });
+    await audit(tx, req.user!.id, "PROJECT_TASK_UPDATED", "ProjectTask", id, { projectId: current.projectId, changes: Object.keys(body), status: nextStatus, progressPercent });
+    return saved;
+  });
+  return res.json({ task: updated, message: "Project task updated." });
 }));
 
 app.listen(port, () => console.log(`Sanora API listening on :${port}`));

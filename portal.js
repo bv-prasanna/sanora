@@ -7,6 +7,7 @@
   let currentUser = null;
   let projects = [];
   let activeProjectId = null;
+  let projectMembers = [];
   const money = (value) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(Number(value || 0));
   const date = (value) => value ? new Intl.DateTimeFormat("en-IN", { dateStyle: "medium" }).format(new Date(value)) : "—";
   const titleCase = (value) => String(value || "—").toLowerCase().replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
@@ -122,6 +123,60 @@
       line.append(info, link); container.append(line);
     });
   }
+  function populatePlanningForms(members, milestones) {
+    projectMembers = members || [];
+    const milestoneSelect = $("#taskMilestone"); milestoneSelect.replaceChildren();
+    const none = window.document.createElement("option"); none.value = ""; none.textContent = "No milestone"; milestoneSelect.append(none);
+    (milestones || []).forEach(milestone => { const option = window.document.createElement("option"); option.value = milestone.id; option.textContent = milestone.title; milestoneSelect.append(option); });
+    const assigneeSelect = $("#taskAssignee"); assigneeSelect.replaceChildren();
+    const unassigned = window.document.createElement("option"); unassigned.value = ""; unassigned.textContent = "Unassigned"; assigneeSelect.append(unassigned);
+    projectMembers.forEach(member => { const option = window.document.createElement("option"); option.value = member.id; option.textContent = member.name + " · " + titleCase(member.role); assigneeSelect.append(option); });
+  }
+  async function updateTaskStatus(task, nextStatus) {
+    try {
+      const result = await api("/tasks/" + encodeURIComponent(task.id), { method: "PATCH", body: JSON.stringify({ status: nextStatus }) });
+      message("#dashboardMessage", result.message || "Task updated.", "info");
+      await loadProject(activeProjectId);
+    } catch (error) { message("#dashboardMessage", error.message, "error"); }
+  }
+  function renderWorkPlan(plan) {
+    const summary = plan.summary || {};
+    const percent = Math.max(0, Math.min(100, Number(summary.progressPercent || 0)));
+    setText("#workProgressValue", percent + "%");
+    $("#workProgressBar").style.width = percent + "%";
+    setText("#workProgressMeta", (summary.completedTasks || 0) + " of " + (summary.totalTasks || 0) + " visible tasks completed" + ((summary.blockedTasks || 0) ? " · " + summary.blockedTasks + " blocked" : ""));
+    const milestoneList = $("#milestoneList"); milestoneList.replaceChildren();
+    if (!plan.milestones?.length) empty(milestoneList, "No customer-visible milestones have been published yet.");
+    else plan.milestones.forEach(milestone => {
+      const item = window.document.createElement("article"); item.className = "milestone-item";
+      const marker = window.document.createElement("span"); marker.className = "milestone-marker " + String(milestone.status || "PLANNED").toLowerCase();
+      const content = window.document.createElement("div");
+      const title = window.document.createElement("b"); title.textContent = milestone.title;
+      const description = window.document.createElement("p"); description.textContent = milestone.description || "";
+      const meta = window.document.createElement("small"); meta.textContent = titleCase(milestone.status) + " · Target " + date(milestone.forecastDate || milestone.targetDate) + " · " + (milestone._count?.tasks || 0) + " tasks";
+      content.append(title, description, meta); item.append(marker, content); milestoneList.append(item);
+    });
+    const taskList = $("#taskList"); taskList.replaceChildren();
+    if (!plan.tasks?.length) empty(taskList, "No customer-visible work items have been published yet.");
+    else plan.tasks.slice(0, 12).forEach(task => {
+      const item = window.document.createElement("article"); item.className = "plan-task";
+      const main = window.document.createElement("div");
+      const title = window.document.createElement("b"); title.textContent = task.title;
+      const meta = window.document.createElement("small"); meta.textContent = [titleCase(task.status), task.assignedTo?.name, task.dueDate ? "Due " + date(task.dueDate) : null].filter(Boolean).join(" · ");
+      main.append(title, meta);
+      const progress = window.document.createElement("span"); progress.className = "task-percent"; progress.textContent = Math.max(0, Math.min(100, Number(task.progressPercent || 0))) + "%";
+      item.append(main, progress);
+      if (currentUser?.role !== "CUSTOMER" && ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role)) {
+        const action = window.document.createElement("button"); action.type = "button"; action.className = "task-action";
+        const nextStatus = task.status === "TODO" || task.status === "BLOCKED" ? "IN_PROGRESS" : task.status === "IN_PROGRESS" || task.status === "IN_REVIEW" ? "COMPLETED" : null;
+        if (nextStatus) { action.textContent = nextStatus === "COMPLETED" ? "Complete" : "Start / resume"; action.addEventListener("click", () => updateTaskStatus(task, nextStatus)); item.append(action); }
+      }
+      if (currentUser?.role !== "CUSTOMER" && task.blockedReason) {
+        const reason = window.document.createElement("small"); reason.className = "blocked-reason"; reason.textContent = "Blocked: " + task.blockedReason; item.append(reason);
+      }
+      taskList.append(item);
+    });
+  }
   function renderSiteUpdates(updates) {
     const container = $("#siteUpdateList"); container.replaceChildren();
     if (!updates?.length) return empty(container, "No site updates have been recorded for this project yet.");
@@ -142,7 +197,7 @@
       container.append(card);
     });
   }
-  function renderProject(project, ledger, orders, labour, updates) {
+  function renderProject(project, ledger, orders, labour, updates, workPlan) {
     const summary = ledger.summary || {};
     setText("#projectCode", project.code);
     setText("#projectName", project.name);
@@ -163,6 +218,7 @@
     renderOrders(orders.purchaseOrders || []);
     renderLabour(labour.labourRecords || []);
     renderSiteUpdates(updates.updates || []);
+    renderWorkPlan(workPlan);
     renderDocuments(project.id).catch(error => empty($("#projectDocuments"), error.message));
     renderTopUps(project.id).catch(error => empty($("#topUpHistory"), error.message));
     message("#dashboardMessage", ledger.note || "Account figures are calculated from posted ledger entries. Pending items remain separate.", "info");
@@ -180,6 +236,8 @@
       empty($("#labourRecords"), "No project has been assigned.");
       empty($("#siteUpdateList"), "No project has been assigned.");
       empty($("#projectDocuments"), "No project has been assigned.");
+      empty($("#milestoneList"), "No project has been assigned.");
+      empty($("#taskList"), "No project has been assigned.");
       return;
     }
     projects.forEach(project => { const option = document.createElement("option"); option.value = project.id; option.textContent = project.name + " · " + project.code; select.append(option); });
@@ -191,14 +249,17 @@
     if (!projectId) return;
     activeProjectId = projectId;
     message("#dashboardMessage", "Refreshing project information…", "info");
-    const [projectResult, ledger, orders, labour, updates] = await Promise.all([
+    const [projectResult, ledger, orders, labour, updates, workPlan, members] = await Promise.all([
       api("/projects/" + encodeURIComponent(projectId)),
       api("/projects/" + encodeURIComponent(projectId) + "/ledger"),
       api("/projects/" + encodeURIComponent(projectId) + "/purchase-orders"),
       api("/projects/" + encodeURIComponent(projectId) + "/labour"),
-      api("/projects/" + encodeURIComponent(projectId) + "/updates")
+      api("/projects/" + encodeURIComponent(projectId) + "/updates"),
+      api("/projects/" + encodeURIComponent(projectId) + "/work-plan"),
+      (["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role) ? api("/projects/" + encodeURIComponent(projectId) + "/members") : Promise.resolve({ members: [] }))
     ]);
-    renderProject(projectResult.project, ledger, orders, labour, updates);
+    populatePlanningForms(members.members || [], workPlan.milestones || []);
+    renderProject(projectResult.project, ledger, orders, labour, updates, workPlan);
   }
   async function enterWorkspace() {
     show("dashboard");
@@ -207,6 +268,11 @@
     setText("#userInitials", initials(currentUser?.name));
     $("#topUpPanel").hidden = currentUser?.role !== "CUSTOMER";
     $("#financeTopUpPanel").hidden = !["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role);
+    const planningRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role);
+    const managerRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER"].includes(currentUser?.role);
+    $("#planningControls").hidden = !planningRole;
+    $("#milestoneVisibilityLabel").hidden = !managerRole;
+    $("#taskVisibilityLabel").hidden = !managerRole;
     try { await loadProjects(); }
     catch (error) { message("#dashboardMessage", error.message, "error"); }
   }
@@ -219,7 +285,8 @@
     event.preventDefault();
     const button = $("#loginButton"); button.disabled = true; button.textContent = "Signing in…";
     message("#loginMessage", "");
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     try {
       const result = await api("/auth/login", { method: "POST", body: JSON.stringify({ email: form.get("email"), password: form.get("password") }) });
       token = result.token; sessionStorage.setItem(tokenKey, token); currentUser = result.user;
@@ -230,6 +297,41 @@
   $("#projectSelect").addEventListener("change", async event => {
     try { await loadProject(event.target.value); }
     catch (error) { message("#dashboardMessage", error.message, "error"); }
+  });
+  $("#milestoneForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!activeProjectId) return;
+    const form = new FormData(event.currentTarget);
+    const target = form.get("targetDate");
+    try {
+      const result = await api("/projects/" + encodeURIComponent(activeProjectId) + "/milestones", {
+        method: "POST",
+        body: JSON.stringify({
+          title: form.get("title"), description: form.get("description") || undefined,
+          targetDate: target ? new Date(String(target) + "T23:59:59").toISOString() : undefined,
+          customerVisible: $("#milestoneVisibility").checked
+        })
+      });
+      message("#planningMessage", result.message, "info"); formElement.reset(); await loadProject(activeProjectId);
+    } catch (error) { message("#planningMessage", error.message, "error"); }
+  });
+  $("#taskForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!activeProjectId) return;
+    const form = new FormData(event.currentTarget);
+    const due = form.get("dueDate");
+    try {
+      const result = await api("/projects/" + encodeURIComponent(activeProjectId) + "/tasks", {
+        method: "POST",
+        body: JSON.stringify({
+          title: form.get("title"), workPackage: form.get("workPackage") || undefined,
+          milestoneId: form.get("milestoneId") || undefined, assignedToId: form.get("assignedToId") || undefined,
+          dueDate: due ? new Date(String(due) + "T23:59:59").toISOString() : undefined,
+          customerVisible: $("#taskVisibility").checked
+        })
+      });
+      message("#planningMessage", result.message, "info"); event.currentTarget.reset(); await loadProject(activeProjectId);
+    } catch (error) { message("#planningMessage", error.message, "error"); }
   });
   $("#topUpForm").addEventListener("submit", async event => {
     event.preventDefault();

@@ -1062,7 +1062,7 @@ app.get("/api/reception/messages", authenticate, asyncRoute(async (req, res) => 
 app.post("/api/reception/messages", authenticate, asyncRoute(async (req, res) => {
   if (!receptionRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "RECEPTION_ACCESS_RESTRICTED", message: "Reception communications are available only to authorised office staff." } });
   const body = receptionMessageSchema.parse(req.body);
-  const copy = receptionCategoryCopy[body.category];
+  const copy = receptionCategoryCopy[body.category]!;
   const greeting = body.recipientName ? "Hello " + body.recipientName + ",\n\n" : "Hello,\n\n";
   const messageText = greeting + copy.body + "\n\nRegards,\nSanora Spaces\nSmart Spaces, Better Life.\n+91 82960 22107 | info@sanoraspaces.com | sanoraspaces.com";
   const email = body.channel === "EMAIL";

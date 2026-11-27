@@ -366,7 +366,81 @@
       container.append(card);
     }
   }
-  function renderProject(project, ledger, orders, labour, updates, workPlan, financeQueue, statement) {
+  function renderInspections(inspections) {
+    const container = $("#inspectionList"); container.replaceChildren();
+    if (!inspections?.length) return empty(container, currentUser?.role === "CUSTOMER" ? "No customer-visible inspections have been published yet." : "No inspections have been recorded for this project.");
+    const editable = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER", "FINANCE", "PROCUREMENT"].includes(currentUser?.role);
+    inspections.forEach(inspection => {
+      const card = window.document.createElement("article"); card.className = "inspection-card";
+      const head = window.document.createElement("div"); head.className = "inspection-card-head";
+      const titleWrap = window.document.createElement("div");
+      const category = window.document.createElement("span"); category.className = "eyebrow"; category.textContent = titleCase(inspection.category) + " · " + date(inspection.scheduledAt);
+      const title = window.document.createElement("b"); title.textContent = inspection.title;
+      const status = window.document.createElement("span"); status.className = "inspection-status"; status.textContent = titleCase(inspection.status);
+      titleWrap.append(category, title); head.append(titleWrap, status); card.append(head);
+      if (inspection.description) { const desc = window.document.createElement("p"); desc.className = "inspection-description"; desc.textContent = inspection.description; card.append(desc); }
+      const checks = window.document.createElement("div"); checks.className = "inspection-checks";
+      inspection.checks.forEach(check => {
+        const line = window.document.createElement("div"); line.className = "inspection-check";
+        const name = window.document.createElement("span"); name.textContent = check.title + (check.isRequired ? " *" : "");
+        const result = window.document.createElement("select"); result.dataset.checkId = check.id;
+        [["PENDING","Pending"],["PASS","Pass"],["FAIL","Fail"],["NOT_APPLICABLE","N/A"]].forEach(([value,label]) => {
+          const option = window.document.createElement("option"); option.value = value; option.textContent = label; result.append(option);
+        });
+        result.value = check.result; result.disabled = !editable || ["PASSED","CANCELLED"].includes(inspection.status);
+        const note = window.document.createElement("input"); note.type = "text"; note.maxLength = 800; note.placeholder = "Check note (optional)"; note.value = check.notes || "";
+        note.dataset.checkNote = check.id; note.disabled = result.disabled;
+        line.append(name, result, note); checks.append(line);
+      });
+      card.append(checks);
+      if (inspection.resultSummary) { const summary = window.document.createElement("p"); summary.className = "inspection-summary"; summary.textContent = "Result: " + inspection.resultSummary; card.append(summary); }
+      if (inspection.correctiveAction) { const action = window.document.createElement("p"); action.className = "inspection-corrective"; action.textContent = "Corrective action: " + inspection.correctiveAction; card.append(action); }
+      const meta = window.document.createElement("small"); meta.className = "inspection-meta";
+      meta.textContent = "Created by " + (inspection.createdBy?.name || "Sanora team") + (inspection.inspectedBy?.name ? " · Inspected by " + inspection.inspectedBy.name : "") + (inspection.customerVisible ? " · Customer visible" : " · Internal");
+      card.append(meta);
+      if (editable && !["PASSED","CANCELLED"].includes(inspection.status)) {
+        const summaryInput = window.document.createElement("textarea"); summaryInput.rows = 2; summaryInput.maxLength = 1500; summaryInput.placeholder = "Inspection result summary"; summaryInput.value = inspection.resultSummary || "";
+        const actionInput = window.document.createElement("textarea"); actionInput.rows = 2; actionInput.maxLength = 1500; actionInput.placeholder = "Corrective action (required when failed)"; actionInput.value = inspection.correctiveAction || "";
+        card.append(summaryInput, actionInput);
+        const actions = window.document.createElement("div"); actions.className = "inspection-actions";
+        const save = window.document.createElement("button"); save.type = "button"; save.className = "secondary-action"; save.textContent = "Save checklist";
+        save.addEventListener("click", async () => {
+          save.disabled = true;
+          try {
+            const values = [...checks.querySelectorAll("select[data-check-id]")].map(select => ({
+              id: select.dataset.checkId, result: select.value,
+              notes: checks.querySelector('[data-check-note="' + select.dataset.checkId + '"]').value || null
+            }));
+            const result = await api("/inspections/" + encodeURIComponent(inspection.id), { method: "PATCH", body: JSON.stringify({ checks: values }) });
+            message("#inspectionMessage", result.message, "info"); await loadProject(activeProjectId);
+          } catch (error) { message("#inspectionMessage", error.message, "error"); }
+          finally { save.disabled = false; }
+        });
+        actions.append(save);
+        const addAction = (label, statusValue) => {
+          const button = window.document.createElement("button"); button.type = "button"; button.textContent = label;
+          button.addEventListener("click", async () => {
+            button.disabled = true;
+            try {
+              const result = await api("/inspections/" + encodeURIComponent(inspection.id), { method: "PATCH", body: JSON.stringify({
+                status: statusValue, resultSummary: summaryInput.value || undefined,
+                correctiveAction: actionInput.value || undefined
+              }) });
+              message("#inspectionMessage", result.message, "info"); await loadProject(activeProjectId);
+            } catch (error) { message("#inspectionMessage", error.message, "error"); }
+            finally { button.disabled = false; }
+          });
+          actions.append(button);
+        };
+        if (inspection.status === "DRAFT") addAction("Schedule", "SCHEDULED");
+        if (inspection.status === "SCHEDULED" || inspection.status === "FAILED") addAction("Start inspection", "IN_PROGRESS");
+        if (inspection.status === "IN_PROGRESS") { addAction("Mark passed", "PASSED"); addAction("Mark failed", "FAILED"); }
+        card.append(actions);
+      }
+      container.append(card);
+    });
+  }
+  function renderProject(project, ledger, orders, labour, updates, inspections, workPlan, financeQueue, statement) {
     const summary = ledger.summary || {};
     setText("#projectCode", project.code);
     setText("#projectName", project.name);
@@ -389,6 +463,7 @@
     renderOrders(orders.purchaseOrders || []);
     renderLabour(labour.labourRecords || []);
     renderSiteUpdates(updates.updates || []).catch(error => empty($("#siteUpdateList"), error.message));
+    renderInspections(inspections.inspections || []);
     renderEstimates(project.estimates || []);
     renderWorkPlan(workPlan);
     renderFinanceQueue(financeQueue || {});
@@ -408,6 +483,7 @@
       empty($("#purchaseOrders"), "No project has been assigned.");
       empty($("#labourRecords"), "No project has been assigned.");
       empty($("#siteUpdateList"), "No project has been assigned.");
+      empty($("#inspectionList"), "No project has been assigned.");
       empty($("#projectDocuments"), "No project has been assigned.");
       empty($("#milestoneList"), "No project has been assigned.");
       empty($("#taskList"), "No project has been assigned.");
@@ -422,12 +498,13 @@
     if (!projectId) return;
     activeProjectId = projectId;
     message("#dashboardMessage", "Refreshing project information…", "info");
-    const [projectResult, ledger, orders, labour, updates, workPlan, members, financeQueue, statementResult, vendorsResult, staffDirectory] = await Promise.all([
+    const [projectResult, ledger, orders, labour, updates, inspections, workPlan, members, financeQueue, statementResult, vendorsResult, staffDirectory] = await Promise.all([
       api("/projects/" + encodeURIComponent(projectId)),
       api("/projects/" + encodeURIComponent(projectId) + "/ledger"),
       api("/projects/" + encodeURIComponent(projectId) + "/purchase-orders"),
       api("/projects/" + encodeURIComponent(projectId) + "/labour"),
       api("/projects/" + encodeURIComponent(projectId) + "/updates"),
+      api("/projects/" + encodeURIComponent(projectId) + "/inspections"),
       api("/projects/" + encodeURIComponent(projectId) + "/work-plan"),
       (["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SITE_ENGINEER"].includes(currentUser?.role) ? api("/projects/" + encodeURIComponent(projectId) + "/members") : Promise.resolve({ members: [] })),
       (["SUPER_ADMIN", "DIRECTOR", "FINANCE"].includes(currentUser?.role) ? api("/projects/" + encodeURIComponent(projectId) + "/finance-queue") : Promise.resolve({})),
@@ -438,7 +515,7 @@
     populatePlanningForms(members.members || [], workPlan.milestones || []);
     populateVendorSelect(vendorsResult.vendors || []);
     renderProjectTeam(members.members || [], staffDirectory.staff || []);
-    renderProject(projectResult.project, ledger, orders, labour, updates, workPlan, financeQueue, statementResult.statement);
+    renderProject(projectResult.project, ledger, orders, labour, updates, inspections, workPlan, financeQueue, statementResult.statement);
   }
   async function loadCustomers() {
     const result = await api("/customers");
@@ -576,6 +653,8 @@
     $("#labourCreatePanel").hidden = !labourRole;
     $("#staffOperationsForms").hidden = !procurementRole && !estimateRole && !labourRole;
     $("#siteUpdateForm").hidden = !planningRole;
+    $("#inspectionForm").hidden = !planningRole;
+    $("#inspectionVisibilityLabel").hidden = !managerRole;
     const documentUploadRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "PROCUREMENT", "SITE_ENGINEER", "FINANCE"].includes(currentUser?.role);
     $("#documentUploadForm").hidden = !documentUploadRole;
     $("#documentVisibilityLabel").hidden = !managerRole;
@@ -725,6 +804,28 @@
       message("#siteUpdateMessage", error.message, "error");
       await loadProject(activeProjectId).catch(() => undefined);
     } finally { button.disabled = false; button.textContent = "Save site update"; }
+  });
+  $("#inspectionForm").addEventListener("submit", async event => {
+    event.preventDefault(); if (!activeProjectId) return;
+    const formElement = event.currentTarget; const form = new FormData(formElement);
+    const checks = String(form.get("checks") || "").split(/\r?\n/).map(value => value.trim()).filter(Boolean).map(title => ({ title, isRequired: true }));
+    if (!checks.length) return message("#inspectionMessage", "Add at least one checklist item.", "error");
+    const scheduled = form.get("scheduledAt");
+    const button = formElement.querySelector('button[type="submit"]'); button.disabled = true;
+    try {
+      const result = await api("/projects/" + encodeURIComponent(activeProjectId) + "/inspections", {
+        method: "POST",
+        body: JSON.stringify({
+          category: form.get("category"), title: form.get("title"),
+          description: form.get("description") || undefined,
+          scheduledAt: scheduled ? new Date(String(scheduled) + "T09:00:00").toISOString() : undefined,
+          customerVisible: $("#inspectionVisibility").checked, checks
+        })
+      });
+      message("#inspectionMessage", result.message || "Inspection checklist created.", "info");
+      formElement.reset(); await loadProject(activeProjectId);
+    } catch (error) { message("#inspectionMessage", error.message, "error"); }
+    finally { button.disabled = false; }
   });
   $("#projectMemberForm").addEventListener("submit", async event => {
     event.preventDefault(); if (!activeProjectId) return;

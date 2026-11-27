@@ -5,7 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { Prisma, PrismaClient, UserRole, ProjectStatus, LedgerType, LedgerStatus, EstimateStatus, EstimateCustomerDecision, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory, ProjectDocumentCategory, ProjectDocumentStatus, TopUpRequestStatus, ProjectMilestoneStatus, ProjectTaskStatus, ProjectTaskPriority, NotificationType, LeadStatus } from "@prisma/client";
+import { Prisma, PrismaClient, UserRole, ProjectStatus, LedgerType, LedgerStatus, EstimateStatus, EstimateCustomerDecision, PurchaseOrderStatus, LabourRecordStatus, ProjectUpdateCategory, ProjectDocumentCategory, ProjectDocumentStatus, TopUpRequestStatus, ProjectMilestoneStatus, ProjectTaskStatus, ProjectTaskPriority, ProjectInspectionCategory, ProjectInspectionStatus, InspectionCheckResult, NotificationType, LeadStatus } from "@prisma/client";
 import { z, ZodError } from "zod";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
@@ -821,6 +821,107 @@ app.post("/api/labour/:id/approve", authenticate, allow(...financeRoles), asyncR
     return approved;
   });
   return res.json({ labourRecord: record, message: "Labour approved and queued as a pending ledger expense. Finance must separately approve and post the expense." });
+}));
+
+const inspectionCreateSchema = z.object({
+  category: z.nativeEnum(ProjectInspectionCategory).default(ProjectInspectionCategory.QUALITY),
+  title: z.string().trim().min(3).max(160),
+  description: z.string().trim().max(1500).optional(),
+  scheduledAt: z.string().datetime().optional(),
+  customerVisible: z.boolean().default(false),
+  checks: z.array(z.object({
+    title: z.string().trim().min(3).max(240),
+    isRequired: z.boolean().default(true)
+  })).min(1).max(60)
+});
+app.get("/api/projects/:id/inspections", authenticate, asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId, "VIEW"))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const inspections = await prisma.projectInspection.findMany({
+    where: { projectId, ...(req.user!.role === UserRole.CUSTOMER ? { customerVisible: true } : {}) },
+    orderBy: [{ scheduledAt: "asc" }, { createdAt: "desc" }],
+    include: { checks: { orderBy: { sequence: "asc" } }, createdBy: { select: { id: true, name: true } }, inspectedBy: { select: { id: true, name: true } } }
+  });
+  return res.json({ inspections });
+}));
+app.post("/api/projects/:id/inspections", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
+  const projectId = routeParam(req, "id");
+  if (!(await projectAccess(req.user!, projectId, "UPDATE"))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
+  const body = inspectionCreateSchema.parse(req.body);
+  if (!body.checks.some(check => check.isRequired)) return res.status(400).json({ error: { code: "INSPECTION_REQUIRED_CHECK_MISSING", message: "Add at least one required checklist item." } });
+  if (body.customerVisible && !(await projectAccess(req.user!, projectId, "MANAGE"))) return res.status(403).json({ error: { code: "INSPECTION_VISIBILITY_REQUIRES_MANAGER", message: "Only a project manager can publish inspections to the customer portal." } });
+  const inspection = await prisma.$transaction(async tx => {
+    const created = await tx.projectInspection.create({ data: {
+      projectId, category: body.category, title: body.title, description: body.description,
+      scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : undefined,
+      customerVisible: body.customerVisible, createdById: req.user!.id,
+      status: body.scheduledAt ? ProjectInspectionStatus.SCHEDULED : ProjectInspectionStatus.DRAFT,
+      checks: { create: body.checks.map((check, sequence) => ({ title: check.title, isRequired: check.isRequired, sequence })) }
+    }, include: { checks: { orderBy: { sequence: "asc" } } } });
+    await audit(tx, req.user!.id, "PROJECT_INSPECTION_CREATED", "ProjectInspection", created.id, { projectId, category: body.category, checkCount: body.checks.length });
+    return created;
+  });
+  return res.status(201).json({ inspection, message: "Inspection checklist created." });
+}));
+app.patch("/api/inspections/:id", authenticate, allow(...staffRoles), asyncRoute(async (req, res) => {
+  const id = routeParam(req, "id");
+  const current = await prisma.projectInspection.findUnique({ where: { id }, include: { checks: true } });
+  if (!current || !(await projectAccess(req.user!, current.projectId, "UPDATE"))) return res.status(404).json({ error: { code: "INSPECTION_NOT_FOUND", message: "Inspection was not found." } });
+  const body = z.object({
+    status: z.nativeEnum(ProjectInspectionStatus).optional(),
+    resultSummary: z.string().trim().max(1500).nullable().optional(),
+    correctiveAction: z.string().trim().max(1500).nullable().optional(),
+    customerVisible: z.boolean().optional(),
+    checks: z.array(z.object({
+      id: z.string().uuid(),
+      result: z.nativeEnum(InspectionCheckResult),
+      notes: z.string().trim().max(800).nullable().optional()
+    })).max(60).optional()
+  }).parse(req.body);
+  if (body.customerVisible !== undefined && !(await projectAccess(req.user!, current.projectId, "MANAGE"))) return res.status(403).json({ error: { code: "INSPECTION_VISIBILITY_REQUIRES_MANAGER", message: "Only a project manager can change inspection visibility." } });
+  const allowed: Record<ProjectInspectionStatus, ProjectInspectionStatus[]> = {
+    DRAFT: [ProjectInspectionStatus.SCHEDULED, ProjectInspectionStatus.CANCELLED],
+    SCHEDULED: [ProjectInspectionStatus.IN_PROGRESS, ProjectInspectionStatus.CANCELLED],
+    IN_PROGRESS: [ProjectInspectionStatus.PASSED, ProjectInspectionStatus.FAILED, ProjectInspectionStatus.CANCELLED],
+    FAILED: [ProjectInspectionStatus.SCHEDULED, ProjectInspectionStatus.IN_PROGRESS, ProjectInspectionStatus.CANCELLED],
+    PASSED: [],
+    CANCELLED: []
+  };
+  if (body.status && body.status !== current.status && !allowed[current.status].includes(body.status)) return res.status(409).json({ error: { code: "INVALID_INSPECTION_TRANSITION", message: "This inspection cannot move from " + current.status + " to " + body.status + "." } });
+  if (body.checks && ["PASSED", "CANCELLED"].includes(current.status)) return res.status(409).json({ error: { code: "INSPECTION_LOCKED", message: "A passed or cancelled inspection cannot be edited." } });
+  if (body.checks) {
+    const known = new Set(current.checks.map(check => check.id));
+    if (body.checks.some(check => !known.has(check.id)) || new Set(body.checks.map(check => check.id)).size !== body.checks.length) return res.status(400).json({ error: { code: "INVALID_INSPECTION_CHECK", message: "Each checklist result must refer to a unique check in this inspection." } });
+  }
+  const resultingChecks = current.checks.map(check => {
+    const update = body.checks?.find(value => value.id === check.id);
+    return { ...check, result: update?.result ?? check.result };
+  });
+  const finalStatus = body.status || current.status;
+  const finalSummary = body.resultSummary === undefined ? current.resultSummary : body.resultSummary;
+  const finalCorrectiveAction = body.correctiveAction === undefined ? current.correctiveAction : body.correctiveAction;
+  if ((finalStatus === ProjectInspectionStatus.PASSED || finalStatus === ProjectInspectionStatus.FAILED) && !finalSummary?.trim()) return res.status(400).json({ error: { code: "INSPECTION_RESULT_SUMMARY_REQUIRED", message: "Add an inspection result summary before closing the inspection." } });
+  if (finalStatus === ProjectInspectionStatus.FAILED && !finalCorrectiveAction?.trim()) return res.status(400).json({ error: { code: "INSPECTION_CORRECTIVE_ACTION_REQUIRED", message: "A corrective action is required for a failed inspection." } });
+  if (finalStatus === ProjectInspectionStatus.PASSED || finalStatus === ProjectInspectionStatus.FAILED) {
+    const required = resultingChecks.filter(check => check.isRequired);
+    if (required.some(check => check.result === InspectionCheckResult.PENDING)) return res.status(409).json({ error: { code: "INSPECTION_CHECKS_INCOMPLETE", message: "Complete every required checklist item before recording an inspection result." } });
+    if (finalStatus === ProjectInspectionStatus.PASSED && required.some(check => check.result === InspectionCheckResult.FAIL)) return res.status(409).json({ error: { code: "INSPECTION_HAS_FAILED_CHECKS", message: "A failed required check prevents the inspection from passing." } });
+    if (finalStatus === ProjectInspectionStatus.FAILED && !required.some(check => check.result === InspectionCheckResult.FAIL)) return res.status(409).json({ error: { code: "INSPECTION_FAILURE_REQUIRED", message: "Mark at least one required checklist item as failed before recording a failed inspection." } });
+  }
+  const updated = await prisma.$transaction(async tx => {
+    for (const check of body.checks || []) await tx.inspectionCheck.update({ where: { id: check.id }, data: { result: check.result, notes: check.notes } });
+    const saved = await tx.projectInspection.update({ where: { id }, data: {
+      status: body.status,
+      resultSummary: body.resultSummary,
+      correctiveAction: body.correctiveAction,
+      customerVisible: body.customerVisible,
+      inspectedAt: finalStatus === ProjectInspectionStatus.PASSED || finalStatus === ProjectInspectionStatus.FAILED ? new Date() : undefined,
+      inspectedById: finalStatus === ProjectInspectionStatus.PASSED || finalStatus === ProjectInspectionStatus.FAILED ? req.user!.id : undefined
+    }, include: { checks: { orderBy: { sequence: "asc" } }, createdBy: { select: { id: true, name: true } }, inspectedBy: { select: { id: true, name: true } } } });
+    await audit(tx, req.user!.id, "PROJECT_INSPECTION_UPDATED", "ProjectInspection", id, { projectId: current.projectId, status: finalStatus, updatedChecks: body.checks?.length || 0, customerVisible: body.customerVisible });
+    return saved;
+  });
+  return res.json({ inspection: updated, message: "Inspection updated successfully." });
 }));
 
 const projectMemberSchema = z.object({

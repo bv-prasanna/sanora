@@ -697,6 +697,7 @@ model CommunicationLog {
   recipient         String
   subject           String?
   message           String
+  consentConfirmed  Boolean               @default(false)
   status            CommunicationStatus   @default(FAILED)
   providerMessageId String?
   errorMessage      String?

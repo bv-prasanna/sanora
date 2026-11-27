@@ -1036,6 +1036,84 @@ app.post("/api/project-updates/:id/customer-visibility", authenticate, allow(Use
 
 
 
+
+const receptionRoles: UserRole[] = [UserRole.FRONT_DESK, UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS];
+const receptionCategoryCopy: Record<string, { subject: string; heading: string; body: string }> = {
+  PROPERTY_BUY: { subject: "Explore properties with Sanora Spaces", heading: "Looking to buy a property?", body: "Thank you for your interest in Sanora Spaces. We can help you explore available plots and properties, understand the location and documentation, and arrange a discussion or site visit. Reply to this message with your preferred location, budget range and requirements so our team can assist you." },
+  PROPERTY_SELL: { subject: "Property selling assistance | Sanora Spaces", heading: "Planning to sell your property?", body: "Thank you for contacting Sanora Spaces. Our team can understand your property details and connect with you regarding the selling process. Please share the property location, type, approximate area and your preferred contact time so we can take this forward." },
+  CONSTRUCTION: { subject: "Construction solutions | Sanora Spaces", heading: "Planning a construction project?", body: "Thank you for considering Sanora Spaces. We support PEB structures, factory sheds, warehouses, farm villas and related construction requirements. Share your project location, approximate dimensions, intended use and timeline so our team can arrange an initial discussion. Estimates are indicative and final material and labour costs are based on actual project requirements." },
+  GENERAL_INTRO: { subject: "Welcome to Sanora Spaces", heading: "Smart Spaces, Better Life.", body: "Thank you for your interest in Sanora Spaces. We work across property, PEB and industrial structures, farm villas and construction support. Our team would be happy to understand what you are looking for and guide you to the right service. Reply with your requirement and preferred contact time." }
+};
+const receptionMessageSchema = z.object({
+  category: z.enum(["PROPERTY_BUY", "PROPERTY_SELL", "CONSTRUCTION", "GENERAL_INTRO"]),
+  channel: z.enum(["EMAIL", "WHATSAPP"]),
+  recipient: z.string().trim().min(3).max(254),
+  recipientName: z.string().trim().max(120).optional().default("")
+});
+app.get("/api/reception/messages", authenticate, asyncRoute(async (req, res) => {
+  if (!receptionRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "RECEPTION_ACCESS_RESTRICTED", message: "Reception communications are available only to authorised office staff." } });
+  const messages = await prisma.communicationLog.findMany({
+    orderBy: { createdAt: "desc" }, take: 100,
+    include: { actor: { select: { name: true } } }
+  });
+  return res.json({ messages });
+}));
+app.post("/api/reception/messages", authenticate, asyncRoute(async (req, res) => {
+  if (!receptionRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "RECEPTION_ACCESS_RESTRICTED", message: "Reception communications are available only to authorised office staff." } });
+  const body = receptionMessageSchema.parse(req.body);
+  const copy = receptionCategoryCopy[body.category];
+  const greeting = body.recipientName ? "Hello " + body.recipientName + ",\\n\\n" : "Hello,\\n\\n";
+  const messageText = greeting + copy.body + "\\n\\nRegards,\\nSanora Spaces\\nSmart Spaces, Better Life.\\n+91 82960 22107 | info@sanoraspaces.com | sanoraspaces.com";
+  const email = body.channel === "EMAIL";
+  if (email && !z.string().email().safeParse(body.recipient).success) return res.status(400).json({ error: { code: "INVALID_EMAIL", message: "Enter a valid email address." } });
+  if (!email && !/^\\+?[1-9]\\d{7,14}$/.test(body.recipient.replace(/[\\s()-]/g, ""))) return res.status(400).json({ error: { code: "INVALID_WHATSAPP_NUMBER", message: "Enter the WhatsApp number with country code, e.g. +919876543210." } });
+  const log = await prisma.communicationLog.create({ data: {
+    actorId: req.user!.id, category: body.category, channel: body.channel, recipient: body.recipient,
+    subject: email ? copy.subject : null, message: messageText, status: "FAILED"
+  } });
+  try {
+    let providerMessageId: string | undefined;
+    if (email) {
+      const apiKey = process.env.RESEND_API_KEY;
+      const from = process.env.RESEND_FROM_EMAIL;
+      if (!apiKey || !from) throw new Error("Email delivery is not configured. Set RESEND_API_KEY and RESEND_FROM_EMAIL.");
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST", headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ from, to: [body.recipient], subject: copy.subject, text: messageText, html: "<div style='font-family:Arial,sans-serif;line-height:1.7;white-space:pre-line'>" + messageText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") + "</div>" })
+      });
+      const payload = await response.json().catch(() => ({})) as { id?: string; message?: string };
+      if (!response.ok) throw new Error(payload.message || "Email provider rejected the message.");
+      providerMessageId = payload.id;
+    } else {
+      const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+      const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+      if (!phoneId || !accessToken) throw new Error("WhatsApp delivery is not configured. Set WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN.");
+      const templateName = process.env.WHATSAPP_TEMPLATE_NAME || "sanora_reception_message";
+      const languageCode = process.env.WHATSAPP_TEMPLATE_LANGUAGE || "en";
+      const response = await fetch("https://graph.facebook.com/v21.0/" + encodeURIComponent(phoneId) + "/messages", {
+        method: "POST", headers: { Authorization: "Bearer " + accessToken, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messaging_product: "whatsapp", recipient_type: "individual",
+          to: body.recipient.replace(/[\\s()+-]/g, ""),
+          type: "template",
+          template: { name: templateName, language: { code: languageCode }, components: [{ type: "body", parameters: [{ type: "text", text: (body.recipientName ? "Hello " + body.recipientName + ". " : "") + copy.body + " Contact: +91 82960 22107 | info@sanoraspaces.com | sanoraspaces.com" }] }] }
+        })
+      });
+      const payload = await response.json().catch(() => ({})) as { messages?: Array<{ id?: string }>; error?: { message?: string } };
+      if (!response.ok) throw new Error(payload.error?.message || "WhatsApp provider rejected the message. Check the approved template and recipient.");
+      providerMessageId = payload.messages?.[0]?.id;
+    }
+    await prisma.communicationLog.update({ where: { id: log.id }, data: { status: "SENT", providerMessageId } });
+    await prisma.$transaction(tx => audit(tx, req.user!.id, "RECEPTION_MESSAGE_SENT", "CommunicationLog", log.id, { category: body.category, channel: body.channel, recipient: body.recipient }));
+    return res.status(201).json({ id: log.id, status: "SENT", message: (email ? "Email" : "WhatsApp message") + " accepted by the provider." });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message.slice(0, 500) : "Message delivery failed.";
+    await prisma.communicationLog.update({ where: { id: log.id }, data: { status: "FAILED", errorMessage: reason } });
+    await prisma.$transaction(tx => audit(tx, req.user!.id, "RECEPTION_MESSAGE_FAILED", "CommunicationLog", log.id, { category: body.category, channel: body.channel, recipient: body.recipient, reason }));
+    return res.status(502).json({ error: { code: "MESSAGE_DELIVERY_FAILED", message: reason }, communicationId: log.id });
+  }
+}));
+
 const leadRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS, UserRole.BRANCH_MANAGER, UserRole.BRANCH_PARTNER, UserRole.SALES];
 const leadGlobalRoles: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.DIRECTOR, UserRole.CORPORATE_OPS];
 app.get("/api/leads", authenticate, asyncRoute(async (req, res) => {

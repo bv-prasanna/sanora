@@ -805,6 +805,28 @@
       await loadProject(activeProjectId).catch(() => undefined);
     } finally { button.disabled = false; button.textContent = "Save site update"; }
   });
+  $("#inspectionForm").addEventListener("submit", async event => {
+    event.preventDefault(); if (!activeProjectId) return;
+    const formElement = event.currentTarget; const form = new FormData(formElement);
+    const checks = String(form.get("checks") || "").split(/\r?\n/).map(value => value.trim()).filter(Boolean).map(title => ({ title, isRequired: true }));
+    if (!checks.length) return message("#inspectionMessage", "Add at least one checklist item.", "error");
+    const scheduled = form.get("scheduledAt");
+    const button = formElement.querySelector('button[type="submit"]'); button.disabled = true;
+    try {
+      const result = await api("/projects/" + encodeURIComponent(activeProjectId) + "/inspections", {
+        method: "POST",
+        body: JSON.stringify({
+          category: form.get("category"), title: form.get("title"),
+          description: form.get("description") || undefined,
+          scheduledAt: scheduled ? new Date(String(scheduled) + "T09:00:00").toISOString() : undefined,
+          customerVisible: $("#inspectionVisibility").checked, checks
+        })
+      });
+      message("#inspectionMessage", result.message || "Inspection checklist created.", "info");
+      formElement.reset(); await loadProject(activeProjectId);
+    } catch (error) { message("#inspectionMessage", error.message, "error"); }
+    finally { button.disabled = false; }
+  });
   $("#projectMemberForm").addEventListener("submit", async event => {
     event.preventDefault(); if (!activeProjectId) return;
     const form = new FormData(event.currentTarget);

@@ -704,6 +704,7 @@
   }
   async function sendReceptionMessage(channel) {
     const recipient = channel === "EMAIL" ? $("#receptionEmail").value.trim() : $("#receptionPhone").value.trim();
+    if (!$("#receptionConsent").checked) return message("#receptionMessage", "Please confirm the customer agreed to receive this message on the selected channel.", "error");
     if (!recipient) return message("#receptionMessage", channel === "EMAIL" ? "Enter the customer's email address." : "Enter the WhatsApp number with country code.", "error");
     const button = channel === "EMAIL" ? $("#sendReceptionEmail") : $("#sendReceptionWhatsApp");
     button.disabled = true; const oldText = button.textContent; button.textContent = "Sending…";

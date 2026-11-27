@@ -89,6 +89,8 @@ model User {
   approvedPurchaseOrders PurchaseOrder[] @relation("PurchaseOrderApprover")
   recordedLabour LabourRecord[] @relation("LabourRecorder")
   authoredProjectUpdates ProjectUpdate[] @relation("ProjectUpdateAuthor")
+  createdInspections ProjectInspection[] @relation("InspectionCreator")
+  inspectedProjects ProjectInspection[] @relation("InspectionInspector")
   uploadedProjectDocuments ProjectDocument[] @relation("ProjectDocumentUploader")
   submittedTopUps TopUpRequest[] @relation("TopUpRequester")
   reviewedTopUps TopUpRequest[] @relation("TopUpReviewer")
@@ -127,6 +129,7 @@ model Project {
   milestones ProjectMilestone[]
   tasks ProjectTask[]
   notifications Notification[]
+  inspections ProjectInspection[]
   @@index([customerId, status])
 }
 
@@ -598,4 +601,69 @@ model CustomerInvitation {
   invitedBy   User     @relation("InvitationInviter", fields: [invitedById], references: [id])
   @@index([userId, expiresAt])
   @@index([invitedById, createdAt])
+}
+
+enum ProjectInspectionCategory {
+  QUALITY
+  SAFETY
+  MATERIAL
+  STRUCTURAL
+  ELECTRICAL
+  PLUMBING
+  HANDOVER
+  OTHER
+}
+
+enum ProjectInspectionStatus {
+  DRAFT
+  SCHEDULED
+  IN_PROGRESS
+  PASSED
+  FAILED
+  CANCELLED
+}
+
+enum InspectionCheckResult {
+  PENDING
+  PASS
+  FAIL
+  NOT_APPLICABLE
+}
+
+model ProjectInspection {
+  id                String                   @id @default(uuid())
+  projectId         String
+  category          ProjectInspectionCategory @default(QUALITY)
+  title             String
+  description       String?
+  status            ProjectInspectionStatus  @default(DRAFT)
+  scheduledAt       DateTime?
+  inspectedAt       DateTime?
+  resultSummary     String?
+  correctiveAction  String?
+  customerVisible   Boolean                  @default(false)
+  createdById       String
+  inspectedById     String?
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  project           Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy         User                     @relation("InspectionCreator", fields: [createdById], references: [id])
+  inspectedBy       User?                    @relation("InspectionInspector", fields: [inspectedById], references: [id])
+  checks            InspectionCheck[]
+  @@index([projectId, status, scheduledAt])
+  @@index([projectId, customerVisible, createdAt])
+}
+
+model InspectionCheck {
+  id           String               @id @default(uuid())
+  inspectionId String
+  title        String
+  isRequired   Boolean              @default(true)
+  result       InspectionCheckResult @default(PENDING)
+  notes        String?
+  sequence     Int                  @default(0)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  inspection   ProjectInspection    @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  @@index([inspectionId, sequence])
 }

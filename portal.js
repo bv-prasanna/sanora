@@ -675,6 +675,54 @@
     });
     message("#opsMessage", "Showing " + result.summary.totalProjects + " projects available to your account.", "info");
   }
+
+  const receptionCopy = {
+    PROPERTY_BUY: { title: "Explore properties with Sanora Spaces", body: "Thank you for your interest in Sanora Spaces. We can help you explore available plots and properties, understand the location and documentation, and arrange a discussion or site visit. Reply to this message with your preferred location, budget range and requirements so our team can assist you." },
+    PROPERTY_SELL: { title: "Property selling assistance | Sanora Spaces", body: "Thank you for contacting Sanora Spaces. Our team can understand your property details and connect with you regarding the selling process. Please share the property location, type, approximate area and your preferred contact time so we can take this forward." },
+    CONSTRUCTION: { title: "Construction solutions | Sanora Spaces", body: "Thank you for considering Sanora Spaces. We support PEB structures, factory sheds, warehouses, farm villas and related construction requirements. Share your project location, approximate dimensions, intended use and timeline so our team can arrange an initial discussion. Estimates are indicative and final material and labour costs are based on actual project requirements." },
+    GENERAL_INTRO: { title: "Welcome to Sanora Spaces", body: "Thank you for your interest in Sanora Spaces. We work across property, PEB and industrial structures, farm villas and construction support. Our team would be happy to understand what you are looking for and guide you to the right service. Reply with your requirement and preferred contact time." }
+  };
+  function updateReceptionPreview() {
+    const copy = receptionCopy[$("#receptionCategory").value] || receptionCopy.GENERAL_INTRO;
+    setText("#receptionPreviewTitle", copy.title);
+    setText("#receptionPreviewBody", copy.body);
+  }
+  async function loadReceptionHistory() {
+    const result = await api("/reception/messages");
+    const container = $("#receptionHistory"); container.replaceChildren();
+    if (!result.messages?.length) return empty(container, "No messages have been sent from the reception desk yet.");
+    result.messages.forEach(item => {
+      const line = document.createElement("div"); line.className = "transaction";
+      const icon = document.createElement("span"); icon.className = "tx-icon" + (item.status === "SENT" ? " income" : ""); icon.textContent = item.status === "SENT" ? "✓" : "!";
+      const info = document.createElement("div"); const heading = document.createElement("b"); heading.textContent = item.recipient + " · " + titleCase(item.category);
+      const detail = document.createElement("small"); detail.textContent = item.channel + " · " + date(item.createdAt) + " · " + (item.actor?.name || "Staff");
+      info.append(heading, detail); const status = document.createElement("strong"); status.textContent = item.status === "SENT" ? "Accepted" : "Failed"; status.className = item.status === "SENT" ? "positive" : "";
+      line.append(icon, info, status);
+      if (item.errorMessage) { const error = document.createElement("small"); error.textContent = item.errorMessage; error.style.flexBasis = "100%"; line.append(error); }
+      container.append(line);
+    });
+  }
+  async function sendReceptionMessage(channel) {
+    const recipient = channel === "EMAIL" ? $("#receptionEmail").value.trim() : $("#receptionPhone").value.trim();
+    if (!recipient) return message("#receptionMessage", channel === "EMAIL" ? "Enter the customer's email address." : "Enter the WhatsApp number with country code.", "error");
+    const button = channel === "EMAIL" ? $("#sendReceptionEmail") : $("#sendReceptionWhatsApp");
+    button.disabled = true; const oldText = button.textContent; button.textContent = "Sending…";
+    try {
+      const result = await api("/reception/messages", { method: "POST", body: JSON.stringify({
+        channel, category: $("#receptionCategory").value, recipient,
+        recipientName: $("#receptionName").value.trim()
+      }) });
+      message("#receptionMessage", result.message || "Message sent.", "info");
+      await loadReceptionHistory();
+    } catch (error) {
+      message("#receptionMessage", error.message, "error");
+      await loadReceptionHistory().catch(() => undefined);
+    } finally { button.disabled = false; button.textContent = oldText; }
+  }
+  $("#receptionCategory").addEventListener("change", updateReceptionPreview);
+  $("#sendReceptionEmail").addEventListener("click", () => sendReceptionMessage("EMAIL"));
+  $("#sendReceptionWhatsApp").addEventListener("click", () => sendReceptionMessage("WHATSAPP"));
+  $("#refreshReceptionHistory").addEventListener("click", () => loadReceptionHistory().catch(error => message("#receptionMessage", error.message, "error")));
   async function enterWorkspace() {
     show("dashboard");
     setText("#userName", currentUser?.name || "Customer");
@@ -712,6 +760,9 @@
       const leadRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SALES"].includes(currentUser?.role);
       $("#leadInbox").hidden = !leadRole;
       if (leadRole) await loadLeads();
+      const receptionRole = ["FRONT_DESK", "SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS"].includes(currentUser?.role);
+      $("#receptionDesk").hidden = !receptionRole;
+      if (receptionRole) { updateReceptionPreview(); await loadReceptionHistory(); }
       const customerAdminRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SALES"].includes(currentUser?.role);
       $("#customerAdminPanel").hidden = !customerAdminRole;
       if (customerAdminRole) await loadCustomers();

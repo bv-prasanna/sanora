@@ -1048,7 +1048,8 @@ const receptionMessageSchema = z.object({
   category: z.enum(["PROPERTY_BUY", "PROPERTY_SELL", "CONSTRUCTION", "GENERAL_INTRO"]),
   channel: z.enum(["EMAIL", "WHATSAPP"]),
   recipient: z.string().trim().min(3).max(254),
-  recipientName: z.string().trim().max(120).optional().default("")
+  recipientName: z.string().trim().max(120).optional().default(""),
+  consentConfirmed: z.literal(true)
 });
 app.get("/api/reception/messages", authenticate, asyncRoute(async (req, res) => {
   if (!receptionRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "RECEPTION_ACCESS_RESTRICTED", message: "Reception communications are available only to authorised office staff." } });
@@ -1069,7 +1070,7 @@ app.post("/api/reception/messages", authenticate, asyncRoute(async (req, res) =>
   if (!email && !/^\+?[1-9]\d{7,14}$/.test(body.recipient.replace(/[\s()-]/g, ""))) return res.status(400).json({ error: { code: "INVALID_WHATSAPP_NUMBER", message: "Enter the WhatsApp number with country code, e.g. +919876543210." } });
   const log = await prisma.communicationLog.create({ data: {
     actorId: req.user!.id, category: body.category, channel: body.channel, recipient: body.recipient,
-    subject: email ? copy.subject : null, message: messageText, status: "FAILED"
+    subject: email ? copy.subject : null, message: messageText, consentConfirmed: true, status: "FAILED"
   } });
   try {
     let providerMessageId: string | undefined;

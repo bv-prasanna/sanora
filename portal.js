@@ -756,7 +756,7 @@
     $("#taskVisibilityLabel").hidden = !managerRole;
     try {
       await loadProjects();
-      if (currentUser?.role !== "CUSTOMER") await loadOperationsSummary();
+      if (currentUser?.role !== "CUSTOMER" && currentUser?.role !== "FRONT_DESK") await loadOperationsSummary();
       const leadRole = ["SUPER_ADMIN", "DIRECTOR", "CORPORATE_OPS", "BRANCH_MANAGER", "BRANCH_PARTNER", "SALES"].includes(currentUser?.role);
       $("#leadInbox").hidden = !leadRole;
       if (leadRole) await loadLeads();

@@ -1062,11 +1062,11 @@ app.post("/api/reception/messages", authenticate, asyncRoute(async (req, res) =>
   if (!receptionRoles.includes(req.user!.role)) return res.status(403).json({ error: { code: "RECEPTION_ACCESS_RESTRICTED", message: "Reception communications are available only to authorised office staff." } });
   const body = receptionMessageSchema.parse(req.body);
   const copy = receptionCategoryCopy[body.category];
-  const greeting = body.recipientName ? "Hello " + body.recipientName + ",\\n\\n" : "Hello,\\n\\n";
-  const messageText = greeting + copy.body + "\\n\\nRegards,\\nSanora Spaces\\nSmart Spaces, Better Life.\\n+91 82960 22107 | info@sanoraspaces.com | sanoraspaces.com";
+  const greeting = body.recipientName ? "Hello " + body.recipientName + ",\n\n" : "Hello,\n\n";
+  const messageText = greeting + copy.body + "\n\nRegards,\nSanora Spaces\nSmart Spaces, Better Life.\n+91 82960 22107 | info@sanoraspaces.com | sanoraspaces.com";
   const email = body.channel === "EMAIL";
   if (email && !z.string().email().safeParse(body.recipient).success) return res.status(400).json({ error: { code: "INVALID_EMAIL", message: "Enter a valid email address." } });
-  if (!email && !/^\\+?[1-9]\\d{7,14}$/.test(body.recipient.replace(/[\\s()-]/g, ""))) return res.status(400).json({ error: { code: "INVALID_WHATSAPP_NUMBER", message: "Enter the WhatsApp number with country code, e.g. +919876543210." } });
+  if (!email && !/^\+?[1-9]\d{7,14}$/.test(body.recipient.replace(/[\s()-]/g, ""))) return res.status(400).json({ error: { code: "INVALID_WHATSAPP_NUMBER", message: "Enter the WhatsApp number with country code, e.g. +919876543210." } });
   const log = await prisma.communicationLog.create({ data: {
     actorId: req.user!.id, category: body.category, channel: body.channel, recipient: body.recipient,
     subject: email ? copy.subject : null, message: messageText, status: "FAILED"
@@ -1094,7 +1094,7 @@ app.post("/api/reception/messages", authenticate, asyncRoute(async (req, res) =>
         method: "POST", headers: { Authorization: "Bearer " + accessToken, "Content-Type": "application/json" },
         body: JSON.stringify({
           messaging_product: "whatsapp", recipient_type: "individual",
-          to: body.recipient.replace(/[\\s()+-]/g, ""),
+          to: body.recipient.replace(/[\s()+-]/g, ""),
           type: "template",
           template: { name: templateName, language: { code: languageCode }, components: [{ type: "body", parameters: [{ type: "text", text: (body.recipientName ? "Hello " + body.recipientName + ". " : "") + copy.body + " Contact: +91 82960 22107 | info@sanoraspaces.com | sanoraspaces.com" }] }] }
         })

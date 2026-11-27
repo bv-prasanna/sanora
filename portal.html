@@ -70,6 +70,7 @@
               <label for="receptionName">Customer name (optional)</label><input id="receptionName" name="recipientName" maxlength="120" placeholder="Customer name">
               <label for="receptionEmail">Email address</label><input id="receptionEmail" name="email" type="email" maxlength="254" placeholder="customer@example.com">
               <label for="receptionPhone">WhatsApp number</label><input id="receptionPhone" name="phone" inputmode="tel" maxlength="24" placeholder="+919876543210">
+              <label class="reception-consent"><input id="receptionConsent" type="checkbox" required> Customer has requested this information and agreed to receive this message on the selected channel.</label>
               <label for="receptionCategory">Enquiry type</label><select id="receptionCategory" name="category"><option value="PROPERTY_BUY">Property buy</option><option value="PROPERTY_SELL">Property sell</option><option value="CONSTRUCTION">Construction</option><option value="GENERAL_INTRO">General introduction about Sanora</option></select>
               <div class="reception-actions"><button id="sendReceptionEmail" type="button">Send email</button><button id="sendReceptionWhatsApp" type="button" class="secondary-action">Send WhatsApp</button></div>
               <p id="receptionMessage" class="form-message" role="status" aria-live="polite"></p>

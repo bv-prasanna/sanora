@@ -1364,7 +1364,12 @@ app.get("/api/projects/:id/work-plan", authenticate, asyncRoute(async (req, res)
     task.status !== ProjectTaskStatus.COMPLETED &&
     ((task.startDate && task.startDate >= now && task.startDate <= lookAheadEnd) ||
      (task.dueDate && task.dueDate >= now && task.dueDate <= lookAheadEnd))
-  ).sort((a, b) => (a.dueDate?.getTime() ?? a.startDate?.getTime() ?? 0) - (b.dueDate?.getTime() ?? b.startDate?.getTime() ?? 0));
+  ).sort((a, b) => {
+    const nextDate = (task: typeof a) => [task.startDate, task.dueDate]
+      .filter((value): value is Date => Boolean(value && value >= now && value <= lookAheadEnd))
+      .sort((left, right) => left.getTime() - right.getTime())[0]?.getTime() ?? Number.MAX_SAFE_INTEGER;
+    return nextDate(a) - nextDate(b);
+  });
   return res.json({
     milestones, tasks,
     summary: {

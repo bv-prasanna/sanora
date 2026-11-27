@@ -710,7 +710,7 @@
     try {
       const result = await api("/reception/messages", { method: "POST", body: JSON.stringify({
         channel, category: $("#receptionCategory").value, recipient,
-        recipientName: $("#receptionName").value.trim()
+        recipientName: $("#receptionName").value.trim(), consentConfirmed: $("#receptionConsent").checked
       }) });
       message("#receptionMessage", result.message || "Message sent.", "info");
       await loadReceptionHistory();
@@ -725,6 +725,7 @@
   $("#refreshReceptionHistory").addEventListener("click", () => loadReceptionHistory().catch(error => message("#receptionMessage", error.message, "error")));
   async function enterWorkspace() {
     show("dashboard");
+    document.body.classList.toggle("front-desk-mode", currentUser?.role === "FRONT_DESK");
     setText("#userName", currentUser?.name || "Customer");
     setText("#userEmail", currentUser?.email || "");
     setText("#userInitials", initials(currentUser?.name));

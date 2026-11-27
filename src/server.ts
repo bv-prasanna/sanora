@@ -848,6 +848,7 @@ app.post("/api/projects/:id/inspections", authenticate, allow(...staffRoles), as
   const projectId = routeParam(req, "id");
   if (!(await projectAccess(req.user!, projectId, "UPDATE"))) return res.status(404).json({ error: { code: "PROJECT_NOT_FOUND", message: "Project was not found." } });
   const body = inspectionCreateSchema.parse(req.body);
+  if (!body.checks.some(check => check.isRequired)) return res.status(400).json({ error: { code: "INSPECTION_REQUIRED_CHECK_MISSING", message: "Add at least one required checklist item." } });
   if (body.customerVisible && !(await projectAccess(req.user!, projectId, "MANAGE"))) return res.status(403).json({ error: { code: "INSPECTION_VISIBILITY_REQUIRES_MANAGER", message: "Only a project manager can publish inspections to the customer portal." } });
   const inspection = await prisma.$transaction(async tx => {
     const created = await tx.projectInspection.create({ data: {
@@ -897,6 +898,10 @@ app.patch("/api/inspections/:id", authenticate, allow(...staffRoles), asyncRoute
     return { ...check, result: update?.result ?? check.result };
   });
   const finalStatus = body.status || current.status;
+  const finalSummary = body.resultSummary === undefined ? current.resultSummary : body.resultSummary;
+  const finalCorrectiveAction = body.correctiveAction === undefined ? current.correctiveAction : body.correctiveAction;
+  if ((finalStatus === ProjectInspectionStatus.PASSED || finalStatus === ProjectInspectionStatus.FAILED) && !finalSummary?.trim()) return res.status(400).json({ error: { code: "INSPECTION_RESULT_SUMMARY_REQUIRED", message: "Add an inspection result summary before closing the inspection." } });
+  if (finalStatus === ProjectInspectionStatus.FAILED && !finalCorrectiveAction?.trim()) return res.status(400).json({ error: { code: "INSPECTION_CORRECTIVE_ACTION_REQUIRED", message: "A corrective action is required for a failed inspection." } });
   if (finalStatus === ProjectInspectionStatus.PASSED || finalStatus === ProjectInspectionStatus.FAILED) {
     const required = resultingChecks.filter(check => check.isRequired);
     if (required.some(check => check.result === InspectionCheckResult.PENDING)) return res.status(409).json({ error: { code: "INSPECTION_CHECKS_INCOMPLETE", message: "Complete every required checklist item before recording an inspection result." } });

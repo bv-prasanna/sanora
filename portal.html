@@ -198,6 +198,19 @@
           </section>
         </div>
         <section class="panel" id="labour"><div class="panel-head"><div><span class="eyebrow">SITE OPERATIONS</span><h3>Labour records</h3></div></div><div id="labourRecords" class="empty-state">Loading labour records…</div></section>
+        <section class="panel" id="inspectionPanel">
+          <div class="panel-head"><div><span class="eyebrow">QUALITY & SAFETY</span><h3>Site inspections</h3></div><span class="live-label">CHECKLIST CONTROL</span></div>
+          <form id="inspectionForm" class="inspection-form" hidden>
+            <label for="inspectionTitle">Inspection title</label><input id="inspectionTitle" name="title" required minlength="3" maxlength="160" placeholder="e.g. Foundation reinforcement inspection">
+            <label for="inspectionCategory">Inspection category</label><select id="inspectionCategory" name="category"><option value="QUALITY">Quality</option><option value="SAFETY">Safety</option><option value="MATERIAL">Material</option><option value="STRUCTURAL">Structural</option><option value="ELECTRICAL">Electrical</option><option value="PLUMBING">Plumbing</option><option value="HANDOVER">Handover</option><option value="OTHER">Other</option></select>
+            <label for="inspectionDate">Scheduled date (optional)</label><input id="inspectionDate" name="scheduledAt" type="date">
+            <label for="inspectionDescription">Scope / location</label><textarea id="inspectionDescription" name="description" rows="2" maxlength="1500" placeholder="Area, floor, work package or inspection scope"></textarea>
+            <label for="inspectionChecks">Checklist items (one per line)</label><textarea id="inspectionChecks" name="checks" rows="5" required placeholder="Rebar diameter and spacing verified&#10;Cover blocks installed correctly&#10;Formwork dimensions checked"></textarea>
+            <label class="inline-check" id="inspectionVisibilityLabel"><input id="inspectionVisibility" type="checkbox"> Publish inspection to customer</label>
+            <button type="submit">Create inspection checklist</button><p id="inspectionMessage" class="form-message" role="status" aria-live="polite"></p>
+          </form>
+          <div id="inspectionList" class="inspection-list empty-state">Loading inspection records…</div>
+        </section>
         <section class="panel" id="siteUpdates">
           <div class="panel-head"><div><span class="eyebrow">SITE DIARY</span><h3>Recent site updates</h3></div><span class="live-label">GPS & PHOTO EVIDENCE</span></div>
           <form id="siteUpdateForm" class="site-update-form" hidden>

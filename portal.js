@@ -306,6 +306,41 @@
       const weight = window.document.createElement("span"); weight.textContent = "Weight " + Number(task.weight || 1).toLocaleString("en-IN", { maximumFractionDigits: 2 });
       rowNode.append(title, details, weight); lookAhead.append(rowNode);
     });
+    const gantt = $("#ganttList"); gantt.replaceChildren();
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const horizon = new Date(today.getTime() + 28 * 24 * 60 * 60 * 1000);
+    const datedTasks = (plan.tasks || []).filter(task => task.startDate || task.dueDate);
+    if (!datedTasks.length) empty(gantt, "Add planned start and due dates to tasks to populate the schedule.");
+    else {
+      const header = window.document.createElement("div"); header.className = "gantt-header";
+      for (let week = 0; week < 4; week++) {
+        const cell = window.document.createElement("span");
+        const weekStart = new Date(today.getTime() + week * 7 * 24 * 60 * 60 * 1000);
+        cell.textContent = "W" + (week + 1) + " · " + date(weekStart);
+        header.append(cell);
+      }
+      gantt.append(header);
+      datedTasks.forEach(task => {
+        const rawStart = task.startDate ? new Date(task.startDate) : new Date(task.dueDate);
+        const rawEnd = task.dueDate ? new Date(task.dueDate) : new Date(task.startDate);
+        if (rawEnd < today || rawStart > horizon) return;
+        const start = Math.max(today.getTime(), rawStart.getTime());
+        const end = Math.min(horizon.getTime(), Math.max(start + 24 * 60 * 60 * 1000, rawEnd.getTime()));
+        const left = Math.max(0, Math.min(100, ((start - today.getTime()) / (horizon.getTime() - today.getTime())) * 100));
+        const width = Math.max(1.5, Math.min(100 - left, ((end - start) / (horizon.getTime() - today.getTime())) * 100));
+        const rowNode = window.document.createElement("div"); rowNode.className = "gantt-row";
+        const label = window.document.createElement("div"); label.className = "gantt-task-label";
+        const title = window.document.createElement("b"); title.textContent = task.title;
+        const meta = window.document.createElement("small"); meta.textContent = [task.assignedTo?.name, task.startDate ? date(task.startDate) : "Start TBD", task.dueDate ? "→ " + date(task.dueDate) : ""].filter(Boolean).join(" · ");
+        label.append(title, meta);
+        const track = window.document.createElement("div"); track.className = "gantt-track";
+        const bar = window.document.createElement("span"); bar.className = "gantt-bar " + String(task.status || "TODO").toLowerCase();
+        bar.style.left = left + "%"; bar.style.width = width + "%";
+        bar.textContent = Math.max(0, Math.min(100, Number(task.progressPercent || 0))) + "%";
+        track.append(bar); rowNode.append(label, track); gantt.append(rowNode);
+      });
+      if (!gantt.querySelector(".gantt-row")) empty(gantt, "No tasks fall within the next four weeks.");
+    }
     const milestoneList = $("#milestoneList"); milestoneList.replaceChildren();
     if (!plan.milestones?.length) empty(milestoneList, "No customer-visible milestones have been published yet.");
     else plan.milestones.forEach(milestone => {
@@ -970,7 +1005,7 @@
     event.preventDefault();
     if (!activeProjectId) return;
     const form = new FormData(event.currentTarget);
-    const due = form.get("dueDate");
+    const due = form.get("dueDate"), start = form.get("startDate");
     try {
       const result = await api("/projects/" + encodeURIComponent(activeProjectId) + "/tasks", {
         method: "POST",
@@ -978,6 +1013,7 @@
           title: form.get("title"), workPackage: form.get("workPackage") || undefined,
           weight: Number(form.get("weight") || 1),
           milestoneId: form.get("milestoneId") || undefined, assignedToId: form.get("assignedToId") || undefined,
+          startDate: start ? new Date(String(start) + "T00:00:00").toISOString() : undefined,
           dueDate: due ? new Date(String(due) + "T23:59:59").toISOString() : undefined,
           customerVisible: $("#taskVisibility").checked
         })

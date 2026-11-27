@@ -14,6 +14,7 @@ enum UserRole {
   BRANCH_MANAGER
   BRANCH_PARTNER
   SALES
+  FRONT_DESK
   SITE_ENGINEER
   PROCUREMENT
   FINANCE
@@ -102,6 +103,7 @@ model User {
   assignedLeads Lead[] @relation("LeadAssignee")
   receivedInvitations CustomerInvitation[] @relation("InvitationUser")
   sentInvitations CustomerInvitation[] @relation("InvitationInviter")
+  sentCommunications CommunicationLog[] @relation("CommunicationActor")
 }
 
 model Project {
@@ -667,4 +669,40 @@ model InspectionCheck {
   updatedAt    DateTime             @updatedAt
   inspection   ProjectInspection    @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
   @@index([inspectionId, sequence])
+}
+
+
+enum CommunicationCategory {
+  PROPERTY_BUY
+  PROPERTY_SELL
+  CONSTRUCTION
+  GENERAL_INTRO
+}
+
+enum CommunicationChannel {
+  EMAIL
+  WHATSAPP
+}
+
+enum CommunicationStatus {
+  SENT
+  FAILED
+}
+
+model CommunicationLog {
+  id                String                @id @default(uuid())
+  actorId           String
+  category          CommunicationCategory
+  channel           CommunicationChannel
+  recipient         String
+  subject           String?
+  message           String
+  status            CommunicationStatus   @default(FAILED)
+  providerMessageId String?
+  errorMessage      String?
+  createdAt         DateTime              @default(now())
+  actor             User                  @relation("CommunicationActor", fields: [actorId], references: [id])
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([recipient, createdAt])
 }

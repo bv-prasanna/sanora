@@ -11,6 +11,7 @@ import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { calculateProjectBalance, type PostedLedgerLine } from "./domain/ledger-balance.js";
+import { isMakerCheckerValid } from "./domain/separation-of-duties.js";
 import { hasSanoraPermission, redactAuditMetadata, estimateProjectTotal, validateProjectTransition, validateTaskTransition, validateMilestoneTransition } from "./skeleton/policies.mjs";
 
 const prisma = new PrismaClient();
@@ -426,7 +427,10 @@ app.post("/api/ledger/:id/approve", authenticate, allow(...financeRoles), asyncR
   const entry = await prisma.$transaction(async tx => {
     const current = await tx.ledgerEntry.findUnique({ where: { id: routeParam(req, "id") } });
     if (!current || current.status !== LedgerStatus.PENDING) throw Object.assign(new Error("This entry is not awaiting approval."), { status: 409, code: "LEDGER_NOT_PENDING" });
-    const updated = await tx.ledgerEntry.update({ where: { id: current.id }, data: { status: LedgerStatus.APPROVED, approvedById: req.user!.id, approvedAt: new Date() } });
+    if (!isMakerCheckerValid(current.createdById, req.user!.id)) throw Object.assign(new Error("The person who submitted an expense cannot approve the same expense."), { status: 403, code: "EXPENSE_SELF_APPROVAL_BLOCKED" });
+    const claimed = await tx.ledgerEntry.updateMany({ where: { id: current.id, status: LedgerStatus.PENDING }, data: { status: LedgerStatus.APPROVED, approvedById: req.user!.id, approvedAt: new Date() } });
+    if (claimed.count !== 1) throw Object.assign(new Error("This expense was already reviewed by another Finance user."), { status: 409, code: "LEDGER_ALREADY_REVIEWED" });
+    const updated = await tx.ledgerEntry.findUniqueOrThrow({ where: { id: current.id } });
     await audit(tx, req.user!.id, "LEDGER_ENTRY_APPROVED", "LedgerEntry", updated.id, { projectId: current.projectId });
     if (current.createdById !== req.user!.id) await notify(tx, {
       recipientId: current.createdById, actorId: req.user!.id, projectId: current.projectId, type: NotificationType.EXPENSE_APPROVED,
@@ -441,7 +445,10 @@ app.post("/api/ledger/:id/post", authenticate, allow(...financeRoles), asyncRout
   const entry = await prisma.$transaction(async tx => {
     const current = await tx.ledgerEntry.findUnique({ where: { id: routeParam(req, "id") } });
     if (!current || current.status !== LedgerStatus.APPROVED) throw Object.assign(new Error("Only an approved entry can be posted."), { status: 409, code: "LEDGER_NOT_APPROVED" });
-    const posted = await tx.ledgerEntry.update({ where: { id: current.id }, data: { status: LedgerStatus.POSTED, postedAt: new Date() } });
+    if (!current.approvedById || !isMakerCheckerValid(current.approvedById, req.user!.id)) throw Object.assign(new Error("A different Finance user must post an expense after approval."), { status: 403, code: "EXPENSE_POSTER_MUST_DIFFER_FROM_APPROVER" });
+    const claimed = await tx.ledgerEntry.updateMany({ where: { id: current.id, status: LedgerStatus.APPROVED, approvedById: current.approvedById }, data: { status: LedgerStatus.POSTED, postedAt: new Date() } });
+    if (claimed.count !== 1) throw Object.assign(new Error("This expense was already posted by another Finance user."), { status: 409, code: "LEDGER_ALREADY_POSTED" });
+    const posted = await tx.ledgerEntry.findUniqueOrThrow({ where: { id: current.id } });
     await audit(tx, req.user!.id, "LEDGER_ENTRY_POSTED", "LedgerEntry", posted.id, { projectId: current.projectId });
     if (current.createdById !== req.user!.id) await notify(tx, {
       recipientId: current.createdById, actorId: req.user!.id, projectId: current.projectId, type: NotificationType.EXPENSE_POSTED,
@@ -699,8 +706,11 @@ app.post("/api/purchase-orders/:id/approve", authenticate, allow(...financeRoles
   const po = await prisma.purchaseOrder.findUnique({ where: { id: routeParam(req, "id") } });
   if (!po || !(await projectAccess(req.user!, po.projectId))) return res.status(404).json({ error: { code: "PURCHASE_ORDER_NOT_FOUND", message: "Purchase order was not found." } });
   if (po.status !== PurchaseOrderStatus.SUBMITTED) return res.status(409).json({ error: { code: "PURCHASE_ORDER_NOT_SUBMITTED", message: "Only a submitted purchase order can be approved." } });
+  if (!isMakerCheckerValid(po.createdById, req.user!.id)) return res.status(403).json({ error: { code: "PURCHASE_ORDER_SELF_APPROVAL_BLOCKED", message: "The person who created a purchase order cannot approve it." } });
   const updated = await prisma.$transaction(async tx => {
-    const value = await tx.purchaseOrder.update({ where: { id: po.id }, data: { status: PurchaseOrderStatus.APPROVED, approvedById: req.user!.id, approvedAt: new Date() } });
+    const claimed = await tx.purchaseOrder.updateMany({ where: { id: po.id, status: PurchaseOrderStatus.SUBMITTED }, data: { status: PurchaseOrderStatus.APPROVED, approvedById: req.user!.id, approvedAt: new Date() } });
+    if (claimed.count !== 1) throw Object.assign(new Error("This purchase order was already reviewed."), { status: 409, code: "PURCHASE_ORDER_ALREADY_REVIEWED" });
+    const value = await tx.purchaseOrder.findUniqueOrThrow({ where: { id: po.id } });
     await audit(tx, req.user!.id, "PURCHASE_ORDER_APPROVED", "PurchaseOrder", po.id, { orderNumber: po.orderNumber, subtotal: po.subtotal.toString() });
     if (po.createdById !== req.user!.id) await notify(tx, {
       recipientId: po.createdById, actorId: req.user!.id, projectId: po.projectId, type: NotificationType.PURCHASE_ORDER_APPROVED,
@@ -792,7 +802,10 @@ app.post("/api/labour/:id/approve", authenticate, allow(...financeRoles), asyncR
   const record = await prisma.$transaction(async tx => {
     const current = await tx.labourRecord.findUnique({ where: { id: routeParam(req, "id") } });
     if (!current || current.status !== LabourRecordStatus.SUBMITTED) throw Object.assign(new Error("Only submitted labour records can be approved."), { status: 409, code: "LABOUR_RECORD_NOT_SUBMITTED" });
-    const approved = await tx.labourRecord.update({ where: { id: current.id }, data: { status: LabourRecordStatus.APPROVED, approvedById: req.user!.id, approvedAt: new Date() } });
+    if (!isMakerCheckerValid(current.recordedById, req.user!.id)) throw Object.assign(new Error("The person who recorded labour cannot approve the same record."), { status: 403, code: "LABOUR_SELF_APPROVAL_BLOCKED" });
+    const claimed = await tx.labourRecord.updateMany({ where: { id: current.id, status: LabourRecordStatus.SUBMITTED }, data: { status: LabourRecordStatus.APPROVED, approvedById: req.user!.id, approvedAt: new Date() } });
+    if (claimed.count !== 1) throw Object.assign(new Error("This labour record was already reviewed."), { status: 409, code: "LABOUR_RECORD_ALREADY_REVIEWED" });
+    const approved = await tx.labourRecord.findUniqueOrThrow({ where: { id: current.id } });
     await tx.ledgerEntry.create({ data: {
       projectId: current.projectId, type: LedgerType.LABOUR_EXPENSE, status: LedgerStatus.PENDING,
       amount: current.amount, description: "Approved labour: " + current.description,

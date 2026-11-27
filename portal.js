@@ -840,7 +840,8 @@
   $("#milestoneForm").addEventListener("submit", async event => {
     event.preventDefault();
     if (!activeProjectId) return;
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const target = form.get("targetDate");
     try {
       const result = await api("/projects/" + encodeURIComponent(activeProjectId) + "/milestones", {

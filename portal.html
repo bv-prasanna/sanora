@@ -246,6 +246,7 @@
                 <label for="taskMilestone">Milestone</label><select id="taskMilestone" name="milestoneId"><option value="">No milestone</option></select>
                 <label for="taskAssignee">Assign to</label><select id="taskAssignee" name="assignedToId"><option value="">Unassigned</option></select>
                 <label for="taskDueDate">Due date</label><input id="taskDueDate" name="dueDate" type="date">
+                <label for="taskWeight">Progress weight (relative effort)</label><input id="taskWeight" name="weight" type="number" min="0.1" max="1000" step="0.1" value="1" required>
                 <label class="inline-check" id="taskVisibilityLabel"><input id="taskVisibility" type="checkbox"> Show to customer</label>
                 <button type="submit">Create task</button>
               </form>
@@ -253,6 +254,7 @@
             <p id="planningMessage" class="form-message" role="status" aria-live="polite"></p>
           </div>
           <div class="work-progress"><div><small>DELIVERY PROGRESS</small><strong id="workProgressValue">0%</strong></div><div class="progress-track"><span id="workProgressBar"></span></div><small id="workProgressMeta">No work plan has been published yet.</small></div>
+          <section class="lookahead-panel"><div class="panel-head"><div><span class="eyebrow">LOOK-AHEAD PLANNING</span><h4>Next 14 days</h4></div><span id="overdueTaskCount" class="live-label">0 overdue</span></div><div id="lookAheadList" class="lookahead-list empty-state">No upcoming tasks in the next 14 days.</div></section>
           <div id="milestoneList" class="milestone-list empty-state">Loading milestones…</div>
           <div class="task-list-wrap"><h4>Visible work items</h4><div id="taskList" class="empty-state">Loading project tasks…</div></div>
         </section>

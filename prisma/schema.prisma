@@ -493,6 +493,7 @@ model ProjectTask {
   status          ProjectTaskStatus  @default(TODO)
   priority        ProjectTaskPriority @default(MEDIUM)
   progressPercent Int                @default(0)
+  weight          Decimal            @default(1) @db.Decimal(8, 2)
   startDate       DateTime?
   dueDate         DateTime?
   completedAt     DateTime?

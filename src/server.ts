@@ -11,6 +11,7 @@ import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { calculateProjectBalance, type PostedLedgerLine } from "./domain/ledger-balance.js";
+import { calculateWeightedProgress } from "./domain/weighted-progress.js";
 import { isMakerCheckerValid } from "./domain/separation-of-duties.js";
 import { hasSanoraPermission, redactAuditMetadata, estimateProjectTotal, validateProjectTransition, validateTaskTransition, validateMilestoneTransition } from "./skeleton/policies.mjs";
 
@@ -1276,6 +1277,7 @@ const taskCreateSchema = z.object({
   milestoneId: z.string().uuid().optional(),
   assignedToId: z.string().uuid().optional(),
   priority: z.nativeEnum(ProjectTaskPriority).default(ProjectTaskPriority.MEDIUM),
+  weight: z.number().positive().max(1000).default(1),
   startDate: z.string().datetime().optional(),
   dueDate: z.string().datetime().optional(),
   customerVisible: z.boolean().default(false),
@@ -1352,14 +1354,33 @@ app.get("/api/projects/:id/work-plan", authenticate, asyncRoute(async (req, res)
     })
   ]);
   const activeTasks = tasks.filter(task => task.status !== ProjectTaskStatus.CANCELLED);
-  const progressPercent = activeTasks.length ? Math.round(activeTasks.reduce((sum, task) => sum + task.progressPercent, 0) / activeTasks.length) : 0;
+  const progressPercent = calculateWeightedProgress(activeTasks.map(task => ({
+    progressPercent: task.progressPercent, weight: Number(task.weight), status: task.status
+  })));
+  const now = new Date();
+  const lookAheadEnd = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+  const overdueTasks = activeTasks.filter(task => task.dueDate && task.dueDate < now && task.status !== ProjectTaskStatus.COMPLETED);
+  const lookAheadTasks = activeTasks.filter(task =>
+    task.status !== ProjectTaskStatus.COMPLETED &&
+    ((task.startDate && task.startDate >= now && task.startDate <= lookAheadEnd) ||
+     (task.dueDate && task.dueDate >= now && task.dueDate <= lookAheadEnd))
+  ).sort((a, b) => {
+    const nextDate = (task: typeof a) => [task.startDate, task.dueDate]
+      .filter((value): value is Date => Boolean(value && value >= now && value <= lookAheadEnd))
+      .sort((left, right) => left.getTime() - right.getTime())[0]?.getTime() ?? Number.MAX_SAFE_INTEGER;
+    return nextDate(a) - nextDate(b);
+  });
   return res.json({
     milestones, tasks,
     summary: {
       progressPercent,
+      progressMethod: "WEIGHTED_TASK_EFFORT",
+      totalWeight: activeTasks.reduce((sum, task) => sum + Number(task.weight), 0),
       totalTasks: activeTasks.length,
       completedTasks: activeTasks.filter(task => task.status === ProjectTaskStatus.COMPLETED).length,
-      blockedTasks: activeTasks.filter(task => task.status === ProjectTaskStatus.BLOCKED).length
+      blockedTasks: activeTasks.filter(task => task.status === ProjectTaskStatus.BLOCKED).length,
+      overdueTasks: overdueTasks.length,
+      lookAheadTasks: lookAheadTasks.slice(0, 12)
     }
   });
 }));
@@ -1432,6 +1453,7 @@ app.post("/api/projects/:id/tasks", authenticate, allow(...planningRoles), async
     const created = await tx.projectTask.create({ data: {
       projectId, milestoneId: body.milestoneId, title: body.title, description: body.description,
       workPackage: body.workPackage, assignedToId: body.assignedToId, priority: body.priority,
+      weight: money(body.weight),
       startDate: body.startDate ? new Date(body.startDate) : undefined,
       dueDate: body.dueDate ? new Date(body.dueDate) : undefined,
       customerVisible: body.customerVisible, createdById: req.user!.id,
@@ -1457,6 +1479,7 @@ app.patch("/api/tasks/:id", authenticate, allow(...planningRoles), asyncRoute(as
     status: z.nativeEnum(ProjectTaskStatus).optional(),
     priority: z.nativeEnum(ProjectTaskPriority).optional(),
     progressPercent: z.number().int().min(0).max(100).optional(),
+    weight: z.number().positive().max(1000).optional(),
     assignedToId: z.string().uuid().nullable().optional(),
     startDate: z.string().datetime().nullable().optional(),
     dueDate: z.string().datetime().nullable().optional(),
@@ -1479,7 +1502,7 @@ app.patch("/api/tasks/:id", authenticate, allow(...planningRoles), asyncRoute(as
   const updated = await prisma.$transaction(async tx => {
     const saved = await tx.projectTask.update({ where: { id }, data: {
       title: body.title, description: body.description, status: body.status, priority: body.priority,
-      progressPercent, assignedToId: body.assignedToId,
+      progressPercent, weight: body.weight === undefined ? undefined : money(body.weight), assignedToId: body.assignedToId,
       startDate: body.startDate === undefined ? undefined : body.startDate === null ? null : new Date(body.startDate),
       dueDate: body.dueDate === undefined ? undefined : body.dueDate === null ? null : new Date(body.dueDate),
       blockedReason: nextStatus === ProjectTaskStatus.BLOCKED ? body.blockedReason ?? current.blockedReason : body.blockedReason ?? (body.status ? null : undefined),

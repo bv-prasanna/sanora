@@ -295,7 +295,17 @@
     const percent = Math.max(0, Math.min(100, Number(summary.progressPercent || 0)));
     setText("#workProgressValue", percent + "%");
     $("#workProgressBar").style.width = percent + "%";
-    setText("#workProgressMeta", (summary.completedTasks || 0) + " of " + (summary.totalTasks || 0) + " visible tasks completed" + ((summary.blockedTasks || 0) ? " · " + summary.blockedTasks + " blocked" : ""));
+    setText("#workProgressMeta", (summary.completedTasks || 0) + " of " + (summary.totalTasks || 0) + " tasks completed · weighted by relative effort" + ((summary.blockedTasks || 0) ? " · " + summary.blockedTasks + " blocked" : ""));
+    setText("#overdueTaskCount", (summary.overdueTasks || 0) + " overdue");
+    const lookAhead = $("#lookAheadList"); lookAhead.replaceChildren();
+    if (!summary.lookAheadTasks?.length) empty(lookAhead, "No upcoming tasks are scheduled in the next 14 days.");
+    else summary.lookAheadTasks.forEach(task => {
+      const rowNode = window.document.createElement("div"); rowNode.className = "lookahead-row";
+      const title = window.document.createElement("b"); title.textContent = task.title;
+      const details = window.document.createElement("small"); details.textContent = [task.assignedTo?.name, task.startDate ? "Starts " + date(task.startDate) : null, task.dueDate ? "Due " + date(task.dueDate) : null].filter(Boolean).join(" · ");
+      const weight = window.document.createElement("span"); weight.textContent = "Weight " + Number(task.weight || 1).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+      rowNode.append(title, details, weight); lookAhead.append(rowNode);
+    });
     const milestoneList = $("#milestoneList"); milestoneList.replaceChildren();
     if (!plan.milestones?.length) empty(milestoneList, "No customer-visible milestones have been published yet.");
     else plan.milestones.forEach(milestone => {
@@ -313,7 +323,7 @@
       const item = window.document.createElement("article"); item.className = "plan-task";
       const main = window.document.createElement("div");
       const title = window.document.createElement("b"); title.textContent = task.title;
-      const meta = window.document.createElement("small"); meta.textContent = [titleCase(task.status), task.assignedTo?.name, task.dueDate ? "Due " + date(task.dueDate) : null].filter(Boolean).join(" · ");
+      const meta = window.document.createElement("small"); meta.textContent = [titleCase(task.status), task.assignedTo?.name, task.dueDate ? "Due " + date(task.dueDate) : null, "Weight " + Number(task.weight || 1).toLocaleString("en-IN", { maximumFractionDigits: 2 })].filter(Boolean).join(" · ");
       main.append(title, meta);
       const progress = window.document.createElement("span"); progress.className = "task-percent"; progress.textContent = Math.max(0, Math.min(100, Number(task.progressPercent || 0))) + "%";
       item.append(main, progress);
@@ -966,6 +976,7 @@
         method: "POST",
         body: JSON.stringify({
           title: form.get("title"), workPackage: form.get("workPackage") || undefined,
+          weight: Number(form.get("weight") || 1),
           milestoneId: form.get("milestoneId") || undefined, assignedToId: form.get("assignedToId") || undefined,
           dueDate: due ? new Date(String(due) + "T23:59:59").toISOString() : undefined,
           customerVisible: $("#taskVisibility").checked

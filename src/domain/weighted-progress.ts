@@ -5,7 +5,7 @@ export type WeightedProgressTask = {
 };
 
 /**
- * Calculate task-based physical progress using explicit relative weights.
+ * Calculate task-weighted delivery progress using explicit relative weights.
  * Cancelled tasks are excluded; invalid/non-positive weights fail closed.
  */
 export function calculateWeightedProgress(tasks: WeightedProgressTask[]): number {

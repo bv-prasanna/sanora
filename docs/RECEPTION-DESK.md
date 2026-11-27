@@ -20,6 +20,7 @@ WhatsApp uses the Meta WhatsApp Cloud API:
 The configured WhatsApp template must be approved by Meta and contain one body text variable ({{1}}). Business-initiated WhatsApp messages require an approved template; an ordinary free-form text message is not used here. The recipient must be entered in international format, e.g. +919876543210.
 
 ## Delivery and privacy
+- The receptionist must confirm the customer requested the information and agreed to receive it on the selected channel. This confirmation is required by the API and stored with the communication record.
 - Provider acceptance is recorded as SENT; it is not a guarantee of inbox delivery or read status. The API response/provider webhook integration is needed for delivered/read receipts.
 - Failed attempts are retained with a bounded provider error for troubleshooting.
 - Access is restricted to FRONT_DESK, SUPER_ADMIN, DIRECTOR and CORPORATE_OPS.
